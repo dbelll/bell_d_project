@@ -1,0 +1,23 @@
+The mpi_kmeans python module has to be compiled on resonance using this script:
+
+	./make_py_kmeans
+
+
+To verify kmeans algorithms and compare their timings:
+
+	python verify.py
+
+
+Description of files:
+
+	cpu_kmeans.py -- cpu version of standard kmeans algorithm, used for reference
+
+	cuda_kmeans.py -- cuda version of standard kmeans algorithm
+
+	cuda_kmeans_tri.py -- the cuda version of triangle inequality kmeans algorithm
+
+	verify.py -- used to compare and time all the algorithms:
+				scipy  = scipy cluster algorithm, if available
+				mpi    = triangle kmeans on CPU
+				cuda   = standard means on GPU
+				tri    = triangle inequality on GPU
