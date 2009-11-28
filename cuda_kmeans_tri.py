@@ -43,7 +43,7 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
     #---------------------------------------------------------------
     #            set calculation control variables
     #---------------------------------------------------------------
-    useTextureForData = 0
+    useTextureForData = 1
     
     
     # block and grid sizes for the ccdist kernel (also for hdclosest)
