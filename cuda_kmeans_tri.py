@@ -31,6 +31,18 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
     #
     # The return values are the updated clusters and labels for the data
     
+    #mod = SourceModule("""
+    #texture<float, 2, cudaReadModeElementType> mtx_tex;
+
+    #__global__ void copy_texture(float *dest)
+    #{
+    #  int row = threadIdx.x;
+    #  int col = threadIdx.y;
+    #  int w = blockDim.y;
+    #  dest[row*w+col] = tex2D(mtx_tex, row, col);
+    #}
+    #""")
+    
     
     (nDim, nPts) = data.shape
     nClusters = clusters.shape[1]
@@ -58,6 +70,24 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
     t2 = time.time()
     data_time = t2-t1
     
+    #gpu_dataout = np.zeros((nDim, nPts), np.float32)
+    
+    """
+    copy_texture = mod.get_function("copy_texture")
+    mtx_tex = mod.get_texref("mtx_tex")
+
+    shape = (nDim,nPts)
+    a = data
+    cuda.matrix_to_texref(a, mtx_tex, order="F")
+
+    #dest = gpu_dataout
+    copy_texture(gpu_dataout,
+            block=shape+(1,), 
+            texrefs=[mtx_tex]
+            )
+    assert np.linalg.norm(dest.get()-a) == 0
+    print "texture test passed"
+    """
     
     # block and grid sizes for the ccdist kernel (also for hdclosest)
     blocksize_ccdist = min(512, 16*(1+(nClusters-1)/16))
@@ -88,7 +118,12 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
     mod_ccdist = get_ccdist_module(nDim, nPts, nClusters, blocksize_ccdist)
     mod_hdclosest = get_hdclosest_module(nClusters)
     mod_init = get_init_module(nDim, nPts, nClusters, blocksize_init)
-    mod_step3 = get_step3_module(nDim, nPts, nClusters, blocksize_step3)
+
+    # copy the data to the texture
+    texrefData = mod_init.get_texref("texData")
+    cuda.matrix_to_texref(data, texrefData, order="F")
+
+    mod_step3 = get_step3_module(nDim, nPts, nClusters, blocksize_step3)    
     mod_step4 = get_step4_module(nDim, nPts, nClusters, blocksize_step4_x, blocksize_step4_y)
     mod_step56 = get_step56_module(nDim, nPts, nClusters, blocksize_step56)
     ccdist = mod_ccdist.get_function("ccdist")
@@ -126,13 +161,24 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
     hdclosest_time += t2-t1
     
     t1 = time.time()
-    init(gpu_data, gpu_clusters, gpu_ccdist, gpu_hdClosest, gpu_assignments, 
+    #init(gpu_data, gpu_clusters, gpu_ccdist, gpu_hdClosest, gpu_assignments, 
+    #init( cuda.Out(gpu_dataout), gpu_clusters, gpu_ccdist, gpu_hdClosest, gpu_assignments, 
+    init(gpu_clusters, gpu_ccdist, gpu_hdClosest, gpu_assignments, 
             gpu_lower, gpu_upper,
             block = (blocksize_init, 1, 1),
-            grid = (gridsize_init, 1))
+            grid = (gridsize_init, 1),
+            texrefs=[texrefData])
     pycuda.autoinit.context.synchronize()
     t2 = time.time()
     init_time += t2-t1
+
+    """    
+    print "data"
+    print data
+    print "gpu_dataout"
+    print gpu_dataout
+    return 1
+    """
 
     for i in range(iterations):
     
@@ -334,13 +380,27 @@ def get_init_module(nDim, nPts, nClusters, block_size_assign):
 #define CLUSTER_CHUNKS """ + str(1 + (nClusters*nDim-1)/block_size_assign)  + """
 #define THREADS        """ + str(block_size_assign)            + """
 
+
+texture<float, 2, cudaReadModeElementType>texData;
+
+
 // calculate the distance from a data point to a cluster
-__device__ float dc_dist(float *data, float *cluster)
+//__device__ float dc_dist(float *data, float *cluster)
+//{
+//    float dist = (data[0]-cluster[0]) * (data[0]-cluster[0]);
+//    for (int i=1; i<NDIM; i++) {
+//        float diff = data[i*NPTS] - cluster[i*NCLUSTERS];
+//        dist += diff*diff;
+//    }
+//    return sqrt(dist);
+//}
+
+__device__ float dc_dist_tex(int pt, float *cluster)
 {
-    float dist = (data[0]-cluster[0]) * (data[0]-cluster[0]);
-    for (int i=1; i<NDIM; i++) {
-        float diff = data[i*NPTS] - cluster[i*NCLUSTERS];
-        dist += diff*diff;
+    float dist = (tex2D(texData, 0, pt)-cluster[0]) * (tex2D(texData, 0, pt)-cluster[0]);
+    for(int i=1; i<NDIM; i++){
+        float diff = tex2D(texData, i, pt) - cluster[i*NCLUSTERS];
+        dist += diff * diff;
     }
     return sqrt(dist);
 }
@@ -349,10 +409,19 @@ __device__ float dc_dist(float *data, float *cluster)
 // **TODO**  need to loop through clusters if all of them don't fit into shared memory
 
 // Assign data points to the nearest cluster
-__global__ void init(float *data, float *clusters, 
+//__global__ void init(float *data, float *clusters, 
+//__global__ void init(float *dataout, float *clusters, 
+__global__ void init(float *clusters, 
                      float *ccdist, float *hdClosest, int *assignments, 
                      float *lower, float *upper)
 {
+
+//    int idx = threadIdx.x + blockDim.x * blockIdx.x;
+//    if(idx >= NPTS) return;
+//    for(int d = 0; d<NDIM; d++){
+//        dataout[d*NPTS + idx] = tex2D(texData, d, idx);
+//    }
+    
     // copy cluster to shared memory
     __shared__ float s_clusters[CLUSTERS_SIZE];
     int idx = threadIdx.x;
@@ -368,14 +437,16 @@ __global__ void init(float *data, float *clusters,
     if (idx >= NPTS) return;
     
     // start with cluster 0 as the closest
-    float min_dist = dc_dist(data+idx, s_clusters);
+//    float min_dist = dc_dist(data+idx, s_clusters);
+    float min_dist = dc_dist_tex(idx, s_clusters);
     lower[idx] = min_dist;
     int closest = 0;
     
     for(int c=1; c<NCLUSTERS; c++){
     // **TODO**  see if this test to skip some calculations is really worth it on the gpu versus cpu
         if(min_dist + 0.000001f <= ccdist[closest * NCLUSTERS + c]) continue;
-        float d = dc_dist(data + idx, s_clusters + c);
+//        float d = dc_dist(data + idx, s_clusters + c);
+        float d = dc_dist_tex(idx, s_clusters + c);
         lower[c*NPTS + idx] = d;
         if(d < min_dist){
             min_dist = d;
@@ -404,6 +475,7 @@ def get_step3_module(nDim, nPts, nClusters, blocksize_step3):
 #define CLUSTERS_SIZE  """ + str(nClusters*nDim)               + """
 #define CLUSTER_CHUNKS """ + str(1 + (nClusters*nDim-1)/blocksize_step3)  + """
 #define THREADS        """ + str(blocksize_step3)            + """
+
 
 // calculate the distance from a data point to a cluster
 __device__ float dc_dist(float *data, float *cluster)
@@ -761,7 +833,7 @@ def run_tests1(nTests, nPts, nDim, nClusters, nReps=1, verbose = VERBOSE, print_
             print "gpu assignments"
             print gpu_assignments
             print "gpu new clusters"
-            print gpu_clusters2.get()
+            print gpu_clusters2
             
         differences = sum(gpu_assignments.get() - cpu_assign)
         if(differences > 0):
@@ -1102,11 +1174,12 @@ def quickTimes():
         quiet_run(3, 10000, 60, 20, 5, 1)
         quiet_run(3, 10000, 600, 2, 5, 1)
         quiet_run(3, 10000, 6, 200, 5, 1)
-        quiet_run(3, 100000, 6, 20, 5, 1)
+        #quiet_run(3, 100000, 6, 20, 5, 1)
+        quiet_run(3, 30000, 6, 20, 5, 1)
 
 def quickRun():
     # run to make sure answers have not changed
-    nErrors = run_tests1(1, 1000, 6, 2, 1)
+    nErrors = run_tests1(1, 10, 3, 4, 1)
     nErrors += run_tests1(1, 1000, 600, 2, 1)
     nErrors += run_tests1(1, 10000, 2, 600, 1)
     return nErrors
