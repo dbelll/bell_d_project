@@ -205,10 +205,12 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
         modString += "__global__ void step3(float *data, float *clusters,\n"
     modString += """
                                      float *ccdist, float *hdClosest, int *assignments, 
-                                     float *lower, float *upper, int *badUpper)
+                                     float *lower, float *upper, int *badUpper, 
+                                     int *cluster_changed)
 {
     // copy clusters to shared memory
     __shared__ float s_clusters[CLUSTERS_SIZE];
+    __shared__ int s_cluster_changed[NCLUSTERS];
     int idx = threadIdx.x;
     for(int c = 0; c < CLUSTER_CHUNKS3; c++, idx += THREADS3){
         if(idx < CLUSTERS_SIZE){
@@ -261,6 +263,9 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
             lower[c*NPTS + idx] = d_x_c;
             if(d_x_c < d_x_cx){
                 // assign x to c
+                // mark both c and cx as having changed
+                s_cluster_changed[c] = 1;
+                s_cluster_changed[cx] = 1;
                 ux = d_x_c;
                 cx = c;
                 rx = 0;
@@ -271,6 +276,16 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
     upper[idx] = ux;
     assignments[idx] = cx;
     badUpper[idx] = rx;
+    
+    __syncthreads();
+    
+    // update the global cluster-changed flag
+    idx = threadIdx.x;
+    for(int c = 0; c < CLUSTER_CHUNKS3; c++, idx += THREADS3){
+        if(idx < CLUSTERS_SIZE && s_cluster_changed[idx]){
+            cluster_changed[idx] = 1;
+        }
+    }
 }
 
 //-----------------------------------------------------------------------
@@ -278,7 +293,6 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
 //-----------------------------------------------------------------------
 
 // Calculate the new cluster centers and also the distance between old center and new one
-//__global__ void step4(float *data, float *clusters, 
 """
     if useTextureForData:
         modString += "__global__ void step4(float *clusters,\n"
@@ -286,15 +300,13 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
         modString += "__global__ void step4(float *data, float *clusters,\n"
     modString += """
                     float *new_clusters, int *assignments,
-                    float *cluster_movement)
+                    float *cluster_movement, float *cluster_changed)
 {
     int idx = threadIdx.x;
     int cluster = threadIdx.x + blockDim.x*blockIdx.x;
     if(cluster >= NCLUSTERS) return;
-
+    
     int idy = threadIdx.y;
-"""
-    modString += """
     // allocate cluster_accum, cluster_count, and initialize to zero
     // also initialize the cluster_movement array to zero
     __shared__ float s_cluster_accum[NDIM * THREADS4];
@@ -308,7 +320,10 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
         if(dim >= NDIM) continue;
         s_cluster_accum[dim*THREADS4 + idx] = 0.0f;
     }
+
+    
     __syncthreads();
+
 """
 
     if useTextureForData: 
@@ -339,7 +354,6 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
     }
 """
     modString += """
-
     __syncthreads();
     
     // divide the accum by the number of points and copy to the output area
@@ -357,6 +371,7 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
     
     // calculate the distance between old and new clusters
     cluster_movement[cluster] = calc_dist(new_clusters + cluster, clusters + cluster);
+    
 }
 
 

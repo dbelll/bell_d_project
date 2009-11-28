@@ -120,6 +120,9 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
     gpu_badUpper = gpuarray.zeros((nPts,), np.int32)   # flag to indicate upper bound needs recalc
     gpu_clusters2 = gpuarray.zeros((nDim, nClusters), np.float32);
     gpu_cluster_movement = gpuarray.zeros((nClusters,), np.float32);
+    
+    gpu_cluster_changed = gpuarray.zeros((nClusters,), np.int32)
+    
     pycuda.autoinit.context.synchronize()
     t2 = time.time()
     data_time = t2-t1
@@ -215,19 +218,22 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
         
         if useTextureForData:
             step3(gpu_clusters, gpu_ccdist, gpu_hdClosest, gpu_assignments,
-                    gpu_lower, gpu_upper, gpu_badUpper,
+                    gpu_lower, gpu_upper, gpu_badUpper, gpu_cluster_changed,
                     block = (blocksize_step3, 1, 1),
                     grid = (gridsize_step3, 1),
                     texrefs=[texrefData])
         else:
             step3(gpu_data, gpu_clusters, gpu_ccdist, gpu_hdClosest, gpu_assignments,
-                    gpu_lower, gpu_upper, gpu_badUpper,
+                    gpu_lower, gpu_upper, gpu_badUpper,  gpu_cluster_changed,
                     block = (blocksize_step3, 1, 1),
                     grid = (gridsize_step3, 1))
         
         pycuda.autoinit.context.synchronize()
         t2 = time.time()
         step3_time += t2-t1
+        
+        #print "gpu_cluster_changed"
+        #print gpu_cluster_changed.get()
         
         """
         print "Just before step 4=========================================="
@@ -245,11 +251,13 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
         
         if useTextureForData:
             step4(gpu_clusters, gpu_clusters2, gpu_assignments, gpu_cluster_movement,
+                gpu_cluster_changed,
                 block = (blocksize_step4_x, blocksize_step4_y, 1),
                 grid = (gridsize_step4_x, 1),
                 texrefs=[texrefData])
         else:
             step4(gpu_data, gpu_clusters, gpu_clusters2, gpu_assignments, gpu_cluster_movement,
+                gpu_cluster_changed,
                 block = (blocksize_step4_x, blocksize_step4_y, 1),
                 grid = (gridsize_step4_x, 1))
         
