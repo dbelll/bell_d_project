@@ -163,7 +163,7 @@ def run_quick():
     run_labels(data, 2, 4)
     data = random.rand(10000, 6)
     run_labels(data, 200, 4)
-    data = random.rand(100000, 6)
+    data = random.rand(30000, 6)
     run_labels(data, 20, 4)
     
 if __name__ == '__main__':
