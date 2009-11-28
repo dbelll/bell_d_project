@@ -65,6 +65,11 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
             break;
     blocksize_step4_y = min(nDim, 512/blocksize_step4_x)
     gridsize_step4_x = 1 + (nClusters-1)/blocksize_step4_x
+    gridsize_step4_y = 1 + (nDim-1)/blocksize_step4_y
+    
+    #block and grid sizes for the calc_movement module
+    blocksize_calcm = blocksize_step4_x
+    gridsize_calcm = gridsize_step4_x    
     
     #block and grid sizes for the step56 module
     blocksize_step56 = blocksize_init
@@ -87,6 +92,7 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
     init = mod_ccdist.get_function("init")
     step3 = mod_ccdist.get_function("step3")
     step4 = mod_ccdist.get_function("step4")
+    calc_movement = mod_ccdist.get_function("calc_movement")
     step56 = mod_ccdist.get_function("step56")
     pycuda.autoinit.context.synchronize()
     t2 = time.time()
@@ -215,7 +221,7 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
         """
         
         t1 = time.time()
-        
+        gpu_cluster_changed.fill(0)
         if useTextureForData:
             step3(gpu_clusters, gpu_ccdist, gpu_hdClosest, gpu_assignments,
                     gpu_lower, gpu_upper, gpu_badUpper, gpu_cluster_changed,
@@ -232,8 +238,10 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
         t2 = time.time()
         step3_time += t2-t1
         
-        #print "gpu_cluster_changed"
-        #print gpu_cluster_changed.get()
+        """
+        print "gpu_cluster_changed"
+        print gpu_cluster_changed.get()
+        """
         
         """
         print "Just before step 4=========================================="
@@ -253,13 +261,19 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
             step4(gpu_clusters, gpu_clusters2, gpu_assignments, gpu_cluster_movement,
                 gpu_cluster_changed,
                 block = (blocksize_step4_x, blocksize_step4_y, 1),
-                grid = (gridsize_step4_x, 1),
+                grid = (gridsize_step4_x, gridsize_step4_y),
                 texrefs=[texrefData])
         else:
             step4(gpu_data, gpu_clusters, gpu_clusters2, gpu_assignments, gpu_cluster_movement,
                 gpu_cluster_changed,
                 block = (blocksize_step4_x, blocksize_step4_y, 1),
-                grid = (gridsize_step4_x, 1))
+                grid = (gridsize_step4_x, gridsize_step4_y))
+        
+        #"""
+        calc_movement(gpu_clusters, gpu_clusters2, gpu_cluster_movement,
+                block = (blocksize_calcm, 1, 1),
+                grid = (gridsize_calcm, 1))
+        #"""
         
         pycuda.autoinit.context.synchronize()
         t2 = time.time()

@@ -24,7 +24,7 @@ def get_ccdist_module(nDim, nPts, nClusters, blocksize_ccdist, blocksize_init,
 #define CLUSTER_CHUNKS3 """ + str(1 + (nClusters*nDim-1)/blocksize_init)  + """
 #define THREADS3        """ + str(blocksize_init)            + """
 
-#define THREADS4         """ + str(min(blocksize_step4_x,nClusters))     + """
+#define THREADS4         """ + str(min(blocksize_step4_x,nClusters)) + """
 #define DIMS4            """ + str(blocksize_step4_y)                    + """
 
 #define CLUSTER_CHUNKS5 """ + str(1 + (nClusters-1)/blocksize_step56)  + """
@@ -292,7 +292,7 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
 //                                step4
 //-----------------------------------------------------------------------
 
-// Calculate the new cluster centers and also the distance between old center and new one
+// Calculate the new cluster centers
 """
     if useTextureForData:
         modString += "__global__ void step4(float *clusters,\n"
@@ -303,77 +303,116 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
                     float *cluster_movement, float *cluster_changed)
 {
     int idx = threadIdx.x;
-    int cluster = threadIdx.x + blockDim.x*blockIdx.x;
-    if(cluster >= NCLUSTERS) return;
-    
     int idy = threadIdx.y;
+    int cluster = threadIdx.x + blockDim.x*blockIdx.x;
+    int dim = threadIdx.y + blockDim.y * blockIdx.y;
+    if(cluster >= NCLUSTERS) return;
+    if(dim >= NDIM) return;
+    
     // allocate cluster_accum, cluster_count, and initialize to zero
     // also initialize the cluster_movement array to zero
     __shared__ float s_cluster_accum[NDIM * THREADS4];
     __shared__ unsigned int s_cluster_count[THREADS4];
-    if(idy == 0){
-        s_cluster_count[idx] = 0;
-        cluster_movement[idx] = 0.f;
-    }
-    for(int d = 0; d < NDIM; d+=DIMS4){
-        int dim = d + idy;
-        if(dim >= NDIM) continue;
-        s_cluster_accum[dim*THREADS4 + idx] = 0.0f;
-    }
 
+    int i_accum = dim*THREADS4 + idx;
+    if (idy == 0) s_cluster_count[idx] = 0;
+    s_cluster_accum[i_accum] = 0.0f;
+
+//    if(idy == 0){
+//        s_cluster_count[idx] = 0;
+//        cluster_movement[idx] = 0.f;
+//    }
+//    for(int d = 0; d < NDIM; d+=DIMS4){
+//        int dim = d + idy;
+//        if(dim >= NDIM) continue;
+//        s_cluster_accum[dim*THREADS4 + idx] = 0.0f;
+//    }
     
     __syncthreads();
 
-"""
+"""#------------------------------------------------------------------------
 
     if useTextureForData: 
         modString += """
+
     for(int i=0; i<NPTS; i++){
-        if(i >= NPTS) break;
         if(cluster == assignments[i]){
-            for(int d = idy; d < NDIM; d += DIMS4){
-                if(d == 0) s_cluster_count[idx] += 1;
-                s_cluster_accum[d * THREADS4 + idx] += tex2D(texData, d, i);
-            }
+
+//            for(int d = idy; d < NDIM; d += DIMS4){
+//                if(d == 0) s_cluster_count[idx] += 1;
+//                s_cluster_accum[d * THREADS4 + idx] += tex2D(texData, d, i);
+//            }
+
+            if(idy == 0) s_cluster_count[idx] += 1;
+            s_cluster_accum[i_accum] += tex2D(texData, dim, i);
+
         }
     }
 """
     else: 
         modString += """
     // loop over all data and update cluster_count and cluster_accum
-    for(int dim = idy; dim < NDIM; dim += DIMS4){
-        int dim1 = dim * THREADS4 + idx;
-        int dim2 = dim * NPTS;
-        for(int i=0; i<NPTS; i++, dim2++){
-            if(i >= NPTS) break;
-            if(cluster == assignments[i]){
-                if(dim == 0) s_cluster_count[idx] += 1;
-                s_cluster_accum[dim1] += data[dim2];
-            }
+
+//    for(int dim = idy; dim < NDIM; dim += DIMS4){
+//        int dim1 = dim * THREADS4 + idx;
+//        int dim2 = dim * NPTS;
+//        for(int i=0; i<NPTS; i++, dim2++){
+//            if(i >= NPTS) break;
+//            if(cluster == assignments[i]){
+//                if(dim == 0) s_cluster_count[idx] += 1;
+//                s_cluster_accum[dim1] += data[dim2];
+//            }
+//        }
+//    }
+
+    int iData = dim * NPTS;
+    for(int i=0; i<NPTS; i++, iData++){
+        if(cluster == assignments[i]){
+            if(idy == 0) s_cluster_count[idx] += 1;
+            s_cluster_accum[i_accum] += data[iData];
         }
     }
-"""
+""" #------------------------------------------------------------------------
+
     modString += """
+
     __syncthreads();
     
     // divide the accum by the number of points and copy to the output area
-    for(int d = 0; d < NDIM; d += DIMS4){
-        int dim = d + idy;
-        if(dim >=NDIM) continue;
-        int index1 = dim * NCLUSTERS + cluster;
-        if(s_cluster_count[idx] > 0){
-            new_clusters[index1] = s_cluster_accum[dim * THREADS4 + idx]
-                                                    / s_cluster_count[idx];
-        }else{
-            new_clusters[index1] = clusters[index1];
-        }
+
+//    for(int d = 0; d < NDIM; d += DIMS4){
+//        int dim = d + idy;
+//        if(dim >=NDIM) continue;
+//        int index1 = dim * NCLUSTERS + cluster;
+//        if(s_cluster_count[idx] > 0){
+//            new_clusters[index1] = s_cluster_accum[dim * THREADS4 + idx]
+//                                                    / s_cluster_count[idx];
+//        }else{
+//            new_clusters[index1] = clusters[index1];
+//        }
+//    }
+
+    int index1 = dim * NCLUSTERS + cluster;
+    if(s_cluster_count[idx] > 0){
+        new_clusters[index1] = s_cluster_accum[i_accum] / s_cluster_count[idx];
+    }else{
+        new_clusters[index1] = clusters[index1];
     }
-    
+
     // calculate the distance between old and new clusters
-    cluster_movement[cluster] = calc_dist(new_clusters + cluster, clusters + cluster);
+//    cluster_movement[cluster] = calc_dist(new_clusters + cluster, clusters + cluster);
     
 }
 
+
+//-----------------------------------------------------------------------
+//                                calc movement
+//-----------------------------------------------------------------------
+__global__ void calc_movement(float *clusters, float *new_clusters, float *cluster_movement)
+{
+    int cluster = threadIdx.x + blockDim.x*blockIdx.x;
+    cluster_movement[cluster] = calc_dist(clusters + cluster, new_clusters + cluster);
+}
 
 //-----------------------------------------------------------------------
 //                                step56
@@ -419,7 +458,6 @@ __global__ void step56(int *assignment,
         upper[idx] += s_cluster_movement[assignment[idx]];
         badUpper[idx] = 1;
     }
-//*/
 /*
     upper[idx] += s_cluster_movement[assignment[idx]];
     
