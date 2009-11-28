@@ -274,7 +274,11 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
         }
     }
     upper[idx] = ux;
-    assignments[idx] = cx;
+    if(cx != assignments[idx]){
+        cluster_changed[cx] = 1;
+        cluster_changed[assignments[idx]] = 1;
+        assignments[idx] = cx;
+    }
     badUpper[idx] = rx;
     
     __syncthreads();
@@ -306,7 +310,7 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
     int idy = threadIdx.y;
     int cluster = threadIdx.x + blockDim.x*blockIdx.x;
     int dim = threadIdx.y + blockDim.y * blockIdx.y;
-    if(cluster >= NCLUSTERS) return;
+    if(cluster >= NCLUSTERS || cluster_changed[cluster]) return;
     if(dim >= NDIM) return;
     
     // allocate cluster_accum, cluster_count, and initialize to zero
@@ -408,10 +412,12 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
 //-----------------------------------------------------------------------
 //                                calc movement
 //-----------------------------------------------------------------------
-__global__ void calc_movement(float *clusters, float *new_clusters, float *cluster_movement)
+__global__ void calc_movement(float *clusters, float *new_clusters, float *cluster_movement, 
+                                int *cluster_changed)
 {
     int cluster = threadIdx.x + blockDim.x*blockIdx.x;
-    cluster_movement[cluster] = calc_dist(clusters + cluster, new_clusters + cluster);
+    if(cluster_changed[cluster])
+        cluster_movement[cluster] = calc_dist(clusters + cluster, new_clusters + cluster);
 }
 
 //-----------------------------------------------------------------------
