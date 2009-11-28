@@ -1,6 +1,5 @@
 from pycuda.compiler import SourceModule
 
-print "mods.py"
 #------------------------------------------------------------------------------------
 #                                   source modules
 #------------------------------------------------------------------------------------
@@ -158,8 +157,6 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
     if (idx >= NPTS) return;
     
     // start with cluster 0 as the closest
-//    float min_dist = dc_dist(data+idx, s_clusters);
-//    float min_dist = dc_dist_tex(idx, s_clusters);
 """
     if useTextureForData:
         modString += "float min_dist = dc_dist_tex(idx, s_clusters);\n"
@@ -171,9 +168,8 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
     
     for(int c=1; c<NCLUSTERS; c++){
     // **TODO**  see if this test to skip some calculations is really worth it on the gpu versus cpu
-        if(min_dist + 0.000001f <= ccdist[closest * NCLUSTERS + c]) continue;
-//        float d = dc_dist(data + idx, s_clusters + c);
-//        float d = dc_dist_tex(idx, s_clusters + c);
+//        if(min_dist + 0.000001f <= ccdist[closest * NCLUSTERS + c]) continue;
+        if(min_dist <= ccdist[closest * NCLUSTERS + c]) continue;
 """
     if useTextureForData:
         modString += "float d = dc_dist_tex(idx, s_clusters + c);\n"
@@ -239,9 +235,8 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
         // Step 3a: check if upper bound needs to be recalculated
         float d_x_cx;
         if(rx){
-            // distance between point idx and its currently assigned center needs to be calculated
-//            d_x_cx = dc_dist(data+idx, s_clusters+cx);
-//            d_x_cx = dc_dist_tex(idx, s_clusters+cx);
+
+        // distance between point idx and its currently assigned center needs to be calculated
 """
     if useTextureForData:
         modString += "d_x_cx = dc_dist_tex(idx, s_clusters+cx);\n"
@@ -257,8 +252,6 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
         
         // Step 3b: compute distance between x and c change x's assignment if necessary
         if(d_x_cx > lower[c*NPTS + idx] || d_x_cx > ccdist[cx*NCLUSTERS + c]){
-//            float d_x_c = dc_dist(data+idx, s_clusters+c);
-//            float d_x_c = dc_dist_tex(idx, s_clusters+c);
 """
     if useTextureForData:
         modString += "float d_x_c = dc_dist_tex(idx, s_clusters+c);\n"

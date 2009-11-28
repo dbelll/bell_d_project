@@ -292,7 +292,11 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
         print "gpu_badUpper"
         print gpu_badUpper
         """
-        
+
+        #if gpuarray.sum(gpu_cluster_movement).get() < 1.e-7:
+            #print "No change in clusters!"
+            #break
+            
         # prepare for next iteration
         temp = gpu_clusters
         gpu_clusters = gpu_clusters2
@@ -773,18 +777,18 @@ def timings(t = 0):
     # run a bunch of tests with optional timing
     quiet_runs([1], [10, 100, 1000, 10000], [2, 8, 32, 600], [3, 9, 27, 600], [1], print_it = t)
     
-def quickTimes():
+def quickTimes(nReps = 5):
     if quickRun() > 0:
         print "***ERROR***"
     else:
-        quiet_run(3, 1000, 60, 20, 5, 1)
-        quiet_run(3, 1000, 600, 2, 5, 1)
-        quiet_run(3, 1000, 6, 200, 5, 1)
-        quiet_run(3, 10000, 60, 20, 5, 1)
-        quiet_run(3, 10000, 600, 2, 5, 1)
-        quiet_run(3, 10000, 6, 200, 5, 1)
-        #quiet_run(3, 100000, 6, 20, 5, 1)
-        quiet_run(3, 30000, 6, 20, 5, 1)
+        quiet_run(3, 1000, 60, 20, nReps, 1)
+        quiet_run(3, 1000, 600, 2, nReps, 1)
+        quiet_run(3, 1000, 6, 200, nReps, 1)
+        quiet_run(3, 10000, 60, 20, nReps, 1)
+        quiet_run(3, 10000, 600, 2, nReps, 1)
+        quiet_run(3, 10000, 6, 200, nReps, 1)
+        #quiet_run(3, 100000, 6, 20, nReps, 1)
+        quiet_run(3, 30000, 6, 20, nReps, 1)
 
 def quickRun():
     # run to make sure answers have not changed
