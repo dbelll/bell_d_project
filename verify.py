@@ -150,21 +150,21 @@ def run_tests():
 
     print "Testing complete in ", time.time()-t1, "seconds"
 
-def run_quick():
+def run_quick(nReps = 4):
     data = random.rand(1000, 60)
-    run_labels(data, 20, 4)
+    run_labels(data, 20, nReps)
     data = random.rand(1000, 600)
-    run_labels(data, 2, 4)
+    run_labels(data, 2, nReps)
     data = random.rand(1000, 6)
-    run_labels(data, 200, 4)
+    run_labels(data, 200, nReps)
     data = random.rand(10000, 60)
-    run_labels(data, 20, 4)
+    run_labels(data, 20, nReps)
     data = random.rand(10000, 600)
-    run_labels(data, 2, 4)
+    run_labels(data, 2, nReps)
     data = random.rand(10000, 6)
-    run_labels(data, 200, 4)
+    run_labels(data, 200, nReps)
     data = random.rand(30000, 6)
-    run_labels(data, 20, 4)
+    run_labels(data, 20, nReps)
     
 if __name__ == '__main__':
     run_quick()
