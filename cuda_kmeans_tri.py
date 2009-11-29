@@ -11,7 +11,7 @@ import numpy as np
 import math
 import time
 
-import mods2
+import mods3 as kernels
 
 VERBOSE = 0
 PRINT_TIMES = 0
@@ -39,6 +39,16 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
     (nDim, nPts) = data.shape
     nClusters = clusters.shape[1]
 
+    """
+    print "nPts =", nPts
+    print "nDim =", nDim
+    print "nClusters =", nClusters
+    
+    print "data"
+    print data
+    print "clusters"
+    print clusters
+    """
     
     #---------------------------------------------------------------
     #            set calculation control variables
@@ -60,16 +70,26 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
     gridsize_step3 = gridsize_init
     
     #block and grid sizes for the step4 module
-    for blocksize_step4_x in range(32, 512, 32):
-        if blocksize_step4_x >= nClusters:
-            break;
-    blocksize_step4_y = min(nDim, 512/blocksize_step4_x)
-    gridsize_step4_x = 1 + (nClusters-1)/blocksize_step4_x
-    gridsize_step4_y = 1 + (nDim-1)/blocksize_step4_y
-        
+    # Each block of threads will handle seqcount times the data
+    # eg blocksize of 512 and seqcount of 4, each block reduces 4*512 = 2048 elements
+    blocksize_step4 = 2
+    while(blocksize_step4 < min(512, nPts)):
+        blocksize_step4 *= 2
+    maxblocks = 512
+    seqcount_step4 = 1 + (nPts-1)/(blocksize_step4*maxblocks)
+    gridsize_step4 = 1 + (nPts-1)/(seqcount_step4*blocksize_step4)
+    
+    blocksize_step4part2 = 1
+    while(blocksize_step4part2 < gridsize_step4):
+        blocksize_step4part2 *= 2
+    
+    
+    
     #block and grid sizes for the calc_movement module
-    blocksize_calcm = blocksize_step4_x
-    gridsize_calcm = gridsize_step4_x    
+    for blocksize_calcm in range(32, 512, 32):
+        if blocksize_calcm >= nClusters:
+            break;
+    gridsize_calcm = 1 + (nClusters-1)/blocksize_calcm
     
     #block and grid sizes for the step56 module
     blocksize_step56 = blocksize_init
@@ -81,8 +101,9 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
     #                    prepare source modules
     #---------------------------------------------------------------
     t1 = time.time()
-    mod_ccdist = mods2.get_ccdist_module(nDim, nPts, nClusters, blocksize_ccdist, blocksize_init, 
-                                        blocksize_step4_x, blocksize_step4_y, blocksize_step56,
+    mod_ccdist = kernels.get_ccdist_module(nDim, nPts, nClusters, blocksize_ccdist, blocksize_init, 
+                                        blocksize_step4, seqcount_step4, gridsize_step4, 
+                                        blocksize_step4part2, blocksize_step56,
                                         blocksize_calcm, useTextureForData)
 
     #mod_step56 = mods2.get_step56_module(nDim, nPts, nClusters, blocksize_step56)
@@ -92,6 +113,7 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
     init = mod_ccdist.get_function("init")
     step3 = mod_ccdist.get_function("step3")
     step4 = mod_ccdist.get_function("step4")
+    step4part2 = mod_ccdist.get_function("step4part2")
     calc_movement = mod_ccdist.get_function("calc_movement")
     step56 = mod_ccdist.get_function("step56")
     pycuda.autoinit.context.synchronize()
@@ -129,6 +151,9 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
     
     gpu_cluster_changed = gpuarray.zeros((nClusters,), np.int32)
     gpu_cluster_changed.fill(1)
+    
+    gpu_reduction_out = gpuarray.zeros((nDim, nClusters*gridsize_step4), np.float32)
+    gpu_reduction_counts = gpuarray.zeros((nClusters*gridsize_step4,), np.int32)
     
     pycuda.autoinit.context.synchronize()
     t2 = time.time()
@@ -255,27 +280,65 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
         print gpu_upper
         print "gpu_badUpper"
         print gpu_badUpper
+        print "gpu_clusters"
+        print gpu_clusters
+        print "gpu_cluster_changed"
+        print gpu_cluster_changed
         """        
     
         t1 = time.time()
         
+        """
+        print "step4:"
+        print "blocksize =", blocksize_step4
+        print "gridsize = ", (gridsize_step4, nDim)
+        print "seqcount = ", seqcount_step4
+        """
+        
         if useTextureForData:
-            step4(gpu_clusters, gpu_clusters2, gpu_assignments, gpu_cluster_movement,
-                gpu_cluster_changed,
-                block = (blocksize_step4_x, blocksize_step4_y, 1),
-                grid = (gridsize_step4_x, gridsize_step4_y),
+            step4(gpu_cluster_changed, gpu_reduction_out,
+                gpu_reduction_counts, gpu_assignments,
+                block = (blocksize_step4, 1, 1),
+                grid = (gridsize_step4, nDim),
                 texrefs=[texrefData])
         else:
-            step4(gpu_data, gpu_clusters, gpu_clusters2, gpu_assignments, gpu_cluster_movement,
-                gpu_cluster_changed,
-                block = (blocksize_step4_x, blocksize_step4_y, 1),
-                grid = (gridsize_step4_x, gridsize_step4_y))
+            step4(gpu_data, gpu_assignments, gpu_cluster_changed, gpu_reduction_out,
+                gpu_reduction_counts,
+                block = (blocksize_step4, 1, 1),
+                grid = (gridsize_step4, nDim))
         
-        #"""
+        """
+        print "shape of gpu_reduction_out"
+        print gpu_reduction_out.shape
+        print "gpu_reduction_out"
+        print gpu_reduction_out
+
+        print "shape of gpu_reduction_counts"
+        print gpu_reduction_counts.shape
+        print "gpu_reduction_counts"
+        print gpu_reduction_counts
+        
+        #print "gpu_cluster_changed"
+        #print gpu_cluster_changed
+
+        print "step4, part 2:"
+        print "blocksize =", blocksize_step4part2
+        print "gridsize = ", (1, nDim)
+        """
+        
+        step4part2(gpu_cluster_changed, gpu_reduction_out, gpu_reduction_counts, 
+                gpu_clusters2, gpu_clusters,
+                block = (blocksize_step4part2, 1, 1),
+                grid = (1, nDim))
+        
+        """
+        print "new clusters"
+        print gpu_clusters2
+        """
+
         calc_movement(gpu_clusters, gpu_clusters2, gpu_cluster_movement, gpu_cluster_changed,
                 block = (blocksize_calcm, 1, 1),
                 grid = (gridsize_calcm, 1))
-        #"""
         
         pycuda.autoinit.context.synchronize()
         t2 = time.time()
@@ -508,7 +571,7 @@ def run_tests1(nTests, nPts, nDim, nClusters, nReps=1, verbose = VERBOSE, print_
         #check if the cluster movement values are correct
         cpu_cluster_movement = np.sqrt(((clusters - cpu_new_clusters)**2).sum(0))
         diff = np.max(np.abs(cpu_cluster_movement - gpu_cluster_movement.get()))
-        if diff > 1e-7 * nDim:
+        if diff > 1e-6 * nDim:
             print "*** ERROR *** max cluster movement error =", diff
             nErrors += 1
         if verbose:
@@ -815,7 +878,7 @@ def quickTimes(nReps = 5):
 
 def quickRun():
     # run to make sure answers have not changed
-    nErrors = run_tests1(1, 1000, 60, 20, 1)
+    nErrors = run_tests1(1, 1000, 6, 2, 1)
     nErrors += run_tests1(1, 1000, 600, 2, 1)
     nErrors += run_tests1(1, 10000, 2, 600, 1)
     return nErrors
