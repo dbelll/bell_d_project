@@ -1,4 +1,5 @@
 from pycuda.compiler import SourceModule
+from looper import loop
 
 #------------------------------------------------------------------------------------
 #                                   source modules
@@ -44,10 +45,17 @@ texture<float, 2, cudaReadModeElementType>texData;
 __device__ float calc_dist(float *clusterA, float *clusterB)
 {
     float dist = (clusterA[0]-clusterB[0]) * (clusterA[0]-clusterB[0]);
-    for (int i=1; i<NDIM; i++) {
-        float diff = clusterA[i*NCLUSTERS] - clusterB[i*NCLUSTERS];
-        dist += diff*diff;
-    }
+//    for (int i=1; i<NDIM; i++) {
+//        float diff = clusterA[i*NCLUSTERS] - clusterB[i*NCLUSTERS];
+//        dist += diff*diff;
+//    }
+
+""" + loop(1, nDim, 16, """ 
+        dist += (clusterA[{0}*NCLUSTERS] - clusterB[{0}*NCLUSTERS])
+                *(clusterA[{0}*NCLUSTERS] - clusterB[{0}*NCLUSTERS]);
+"""        ) + """
+
+
     return sqrt(dist);
 }
 
@@ -55,10 +63,16 @@ __device__ float calc_dist(float *clusterA, float *clusterB)
 __device__ float dc_dist(float *data, float *cluster)
 {
     float dist = (data[0]-cluster[0]) * (data[0]-cluster[0]);
-    for (int i=1; i<NDIM; i++) {
-        float diff = data[i*NPTS] - cluster[i*NCLUSTERS];
-        dist += diff*diff;
-    }
+//    for (int i=1; i<NDIM; i++) {
+//        float diff = data[i*NPTS] - cluster[i*NCLUSTERS];
+//        dist += diff*diff;
+//    }
+
+""" + loop(1, nDim, 16, """ 
+        dist += (data[{0}*NPTS] - cluster[{0}*NCLUSTERS])
+                *(data[{0}*NPTS] - cluster[{0}*NCLUSTERS]);
+"""        ) + """
+
     return sqrt(dist);
 }
 
@@ -72,6 +86,7 @@ __device__ float dc_dist_tex(int pt, float *cluster)
     }
     return sqrt(dist);
 }
+
 
 
 //-----------------------------------------------------------------------
@@ -332,11 +347,19 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
     if useTextureForData: 
         modString += """
 
-    for(int i=0; i<NPTS; i++){
-        if(cluster == assignments[i]){
+
+""" + loop(0, nPts, 16, """ 
+        if(cluster == assignments[{0}]){
             if(idy == 0) s_cluster_count[idx] += 1;
-            s_cluster_accum[i_accum] += tex2D(texData, dim, i);
+            s_cluster_accum[i_accum] += tex2D(texData, dim, {0});
         }
+"""        ) + """
+
+//    for(int i=0; i<NPTS; i++){
+//        if(cluster == assignments[i]){
+//            if(idy == 0) s_cluster_count[idx] += 1;
+//            s_cluster_accum[i_accum] += tex2D(texData, dim, i);
+//        }
     }
 """
     else: 
