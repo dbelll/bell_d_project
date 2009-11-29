@@ -83,7 +83,7 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
     t1 = time.time()
     mod_ccdist = mods2.get_ccdist_module(nDim, nPts, nClusters, blocksize_ccdist, blocksize_init, 
                                         blocksize_step4_x, blocksize_step4_y, blocksize_step56,
-                                        useTextureForData)
+                                        blocksize_calcm, useTextureForData)
 
     #mod_step56 = mods2.get_step56_module(nDim, nPts, nClusters, blocksize_step56)
     
@@ -290,7 +290,6 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
         """
     
         t1 = time.time() #------------------------------------------------------------------
-
         if useTextureForData:
             step56(gpu_assignments, gpu_lower, gpu_upper, 
                     gpu_cluster_movement, gpu_badUpper,
@@ -302,7 +301,6 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
                     gpu_cluster_movement, gpu_badUpper,
                     block = (blocksize_step56, 1, 1),
                     grid = (gridsize_step56, 1))
-                    
         pycuda.autoinit.context.synchronize()
         t2 = time.time()
         step56_time += t2-t1 #--------------------------------------------------------------
@@ -817,7 +815,7 @@ def quickTimes(nReps = 5):
 
 def quickRun():
     # run to make sure answers have not changed
-    nErrors = run_tests1(1, 10, 3, 4, 1)
+    nErrors = run_tests1(1, 1000, 60, 20, 1)
     nErrors += run_tests1(1, 1000, 600, 2, 1)
     nErrors += run_tests1(1, 10000, 2, 600, 1)
     return nErrors

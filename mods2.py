@@ -6,29 +6,32 @@ from pycuda.compiler import SourceModule
 
 def get_ccdist_module(nDim, nPts, nClusters, blocksize_ccdist, blocksize_init, 
                         blocksize_step4_x, blocksize_step4_y, blocksize_step56,
-                        useTextureForData):
+                        blocksize_calcm, useTextureForData):
     # module to calculate distances between each cluster and half distance to closest
     
     modString = """
 
-#define NCLUSTERS      """ + str(nClusters)                    + """
-#define NDIM           """ + str(nDim)                         + """
-#define NPTS           """ + str(nPts)                         + """
-#define CLUSTERS_SIZE  """ + str(nClusters*nDim)               + """
-#define CLUSTER_CHUNKS """ + str(1 + (nClusters*nDim-1)/blocksize_ccdist) + """
-#define THREADS        """ + str(blocksize_ccdist) + """
+#define NCLUSTERS      """ + str(nClusters)                                + """
+#define NDIM           """ + str(nDim)                                     + """
+#define NPTS           """ + str(nPts)                                     + """
+#define CLUSTERS_SIZE  """ + str(nClusters*nDim)                           + """
+#define CLUSTER_CHUNKS """ + str(1 + (nClusters*nDim-1)/blocksize_ccdist)  + """
+#define THREADS        """ + str(blocksize_ccdist)                         + """
 
-#define CLUSTER_CHUNKS2 """ + str(1 + (nClusters*nDim-1)/blocksize_init)  + """
-#define THREADS2        """ + str(blocksize_init)            + """
+#define CLUSTER_CHUNKS2 """ + str(1 + (nClusters*nDim-1)/blocksize_init)   + """
+#define THREADS2        """ + str(blocksize_init)                          + """
 
-#define CLUSTER_CHUNKS3 """ + str(1 + (nClusters*nDim-1)/blocksize_init)  + """
-#define THREADS3        """ + str(blocksize_init)            + """
+#define CLUSTER_CHUNKS3 """ + str(1 + (nClusters*nDim-1)/blocksize_init)   + """
+#define THREADS3        """ + str(blocksize_init)                          + """
 
-#define THREADS4         """ + str(min(blocksize_step4_x,nClusters)) + """
-#define DIMS4            """ + str(blocksize_step4_y)                    + """
+#define THREADS4        """ + str(min(blocksize_step4_x,nClusters))        + """
+#define DIMS4           """ + str(blocksize_step4_y)                       + """
 
-#define CLUSTER_CHUNKS5 """ + str(1 + (nClusters-1)/blocksize_step56)  + """
-#define THREADS5        """ + str(blocksize_step56)            + """
+#define THREADS4A       """ + str(blocksize_calcm)                         + """
+#define CLUSTER_CHUNKS4A """ + str(1 + (nClusters*nDim-1)/blocksize_calcm) + """
+
+#define CLUSTER_CHUNKS5 """ + str(1 + (nClusters-1)/blocksize_step56)      + """
+#define THREADS5        """ + str(blocksize_step56)                        + """
 
 texture<float, 2, cudaReadModeElementType>texData;
 
@@ -322,16 +325,6 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
     if (idy == 0) s_cluster_count[idx] = 0;
     s_cluster_accum[i_accum] = 0.0f;
 
-//    if(idy == 0){
-//        s_cluster_count[idx] = 0;
-//        cluster_movement[idx] = 0.f;
-//    }
-//    for(int d = 0; d < NDIM; d+=DIMS4){
-//        int dim = d + idy;
-//        if(dim >= NDIM) continue;
-//        s_cluster_accum[dim*THREADS4 + idx] = 0.0f;
-//    }
-    
     __syncthreads();
 
 """#------------------------------------------------------------------------
@@ -341,34 +334,14 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
 
     for(int i=0; i<NPTS; i++){
         if(cluster == assignments[i]){
-
-//            for(int d = idy; d < NDIM; d += DIMS4){
-//                if(d == 0) s_cluster_count[idx] += 1;
-//                s_cluster_accum[d * THREADS4 + idx] += tex2D(texData, d, i);
-//            }
-
             if(idy == 0) s_cluster_count[idx] += 1;
             s_cluster_accum[i_accum] += tex2D(texData, dim, i);
-
         }
     }
 """
     else: 
         modString += """
     // loop over all data and update cluster_count and cluster_accum
-
-//    for(int dim = idy; dim < NDIM; dim += DIMS4){
-//        int dim1 = dim * THREADS4 + idx;
-//        int dim2 = dim * NPTS;
-//        for(int i=0; i<NPTS; i++, dim2++){
-//            if(i >= NPTS) break;
-//            if(cluster == assignments[i]){
-//                if(dim == 0) s_cluster_count[idx] += 1;
-//                s_cluster_accum[dim1] += data[dim2];
-//            }
-//        }
-//    }
-
     int iData = dim * NPTS;
     for(int i=0; i<NPTS; i++, iData++){
         if(cluster == assignments[i]){
@@ -383,29 +356,12 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
     __syncthreads();
     
     // divide the accum by the number of points and copy to the output area
-
-//    for(int d = 0; d < NDIM; d += DIMS4){
-//        int dim = d + idy;
-//        if(dim >=NDIM) continue;
-//        int index1 = dim * NCLUSTERS + cluster;
-//        if(s_cluster_count[idx] > 0){
-//            new_clusters[index1] = s_cluster_accum[dim * THREADS4 + idx]
-//                                                    / s_cluster_count[idx];
-//        }else{
-//            new_clusters[index1] = clusters[index1];
-//        }
-//    }
-
     int index1 = dim * NCLUSTERS + cluster;
     if(s_cluster_count[idx] > 0){
         new_clusters[index1] = s_cluster_accum[i_accum] / s_cluster_count[idx];
     }else{
         new_clusters[index1] = clusters[index1];
     }
-
-    // calculate the distance between old and new clusters
-//    cluster_movement[cluster] = calc_dist(new_clusters + cluster, clusters + cluster);
-    
 }
 
 
@@ -415,9 +371,19 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
 __global__ void calc_movement(float *clusters, float *new_clusters, float *cluster_movement, 
                                 int *cluster_changed)
 {
+    // copy clusters to shared memory
+    __shared__ float s_clusters[CLUSTERS_SIZE];
+    int idx = threadIdx.x;
+    for(int c = 0; c < CLUSTER_CHUNKS4A; c++, idx += THREADS4A){
+        if(idx < CLUSTERS_SIZE){
+            s_clusters[idx] = clusters[idx];
+        }
+    }
+    __syncthreads();
+    
     int cluster = threadIdx.x + blockDim.x*blockIdx.x;
     if(cluster_changed[cluster])
-        cluster_movement[cluster] = calc_dist(clusters + cluster, new_clusters + cluster);
+        cluster_movement[cluster] = calc_dist(s_clusters + cluster, new_clusters + cluster);
 }
 
 //-----------------------------------------------------------------------
