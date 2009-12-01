@@ -232,7 +232,7 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
 {
     // copy clusters to shared memory
     __shared__ float s_clusters[CLUSTERS_SIZE];
-    __shared__ int s_cluster_changed[NCLUSTERS];
+//    __shared__ int s_cluster_changed[NCLUSTERS];
     int idx = threadIdx.x;
     for(int c = 0; c < CLUSTER_CHUNKS3; c++, idx += THREADS3){
         if(idx < CLUSTERS_SIZE){
@@ -286,8 +286,8 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
             if(d_x_c < d_x_cx){
                 // assign x to c
                 // mark both c and cx as having changed
-                s_cluster_changed[c] = 1;
-                s_cluster_changed[cx] = 1;
+//                s_cluster_changed[c] = 1;
+//                s_cluster_changed[cx] = 1;
                 ux = d_x_c;
                 cx = c;
                 rx = 0;
@@ -295,6 +295,7 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
             }
         }
     }
+    __syncthreads();
     upper[idx] = ux;
     if(cx != assignments[idx]){
         cluster_changed[cx] = 1;
@@ -305,13 +306,13 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
     
     __syncthreads();
     
-    // update the global cluster-changed flag
-    idx = threadIdx.x;
-    for(int c = 0; c < CLUSTER_CHUNKS3; c++, idx += THREADS3){
-        if(idx < CLUSTERS_SIZE && s_cluster_changed[idx]){
-            cluster_changed[idx] = 1;
-        }
-    }
+//    // update the global cluster-changed flag
+//    idx = threadIdx.x;
+//    for(int c = 0; c < CLUSTER_CHUNKS3; c++, idx += THREADS3){
+//        if(idx < CLUSTERS_SIZE && s_cluster_changed[idx]){
+//            cluster_changed[idx] = 1;
+//        }
+//    }
 }
 
 //-----------------------------------------------------------------------
@@ -319,7 +320,13 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
 //-----------------------------------------------------------------------
 
 // Calculate the new cluster centers
-__global__ void step4(int *cluster_changed, float *reduction_out,
+"""
+    if useTextureForData:
+        modString += "__global__ void step4(\n"
+    else:
+        modString += "__global__ void step4(float *data,\n"
+    modString += """
+                        int *cluster_changed, float *reduction_out,
                         int *reduction_counts, int *assignments)
 {
     __shared__ float s_data[THREADS4];
@@ -338,7 +345,13 @@ __global__ void step4(int *cluster_changed, float *reduction_out,
                 if(iData >= NPTS) break;
                 if(assignments[iData] == c){
                     count += 1;
-                    tot += tex2D(texData, dim, iData);
+//                    tot += tex2D(texData, dim, iData);
+"""
+    if useTextureForData:
+        modString += "tot += tex2D(texData, dim, iData);\n"
+    else:
+        modString += "tot += data[dim*NPTS + iData];\n"
+    modString += """
                 }
             }
             s_data[idx] = tot;
@@ -403,88 +416,6 @@ __global__ void step4(int *cluster_changed, float *reduction_out,
         }
     }
 }
-    // loop over all cluster values:
-//    for(int c=0; c<NCLUSTERS; c++){
-//
-//    }
-//        s_data[idx] = 0.0f;
-//        s_count[idx] = 0;
-//
-//        if(cluster_changed[c]){
-//            
-//            // reduce some data into shared memory
-//            float tot = 0.0f;
-//            int count = 0;
-//            
-//            for(int s=0; s<SEQ_COUNT4; s++){
-//                if(iData > NPTS) break;
-//                if(assignments[iData] == c){
-//                    count += 1;
-//                    tot += tex2D(texData, dim, iData);
-//                }
-//                iData += THREADS4;
-//            }
-//            s_data[idx] = tot;
-//            s_count[idx] = count;
-//            __syncthreads();
-//
-//            #if (THREADS4 >= 512) 
-//            if (idx < 256) { 
-//                s_data[idx] += s_data[idx + 256]; 
-//                s_count[idx] += s_count[idx + 256];
-//            }
-//            __syncthreads();
-//            #endif
-//
-//            #if (THREADS4 >= 256) 
-//            if (idx < 128) { 
-//                s_data[idx] += s_data[idx+128]; 
-//                s_count[idx] += s_count[idx + 128];
-//            } 
-//            __syncthreads(); 
-//            #endif
-//
-//            #if (THREADS4 >= 128) 
-//            if (idx < 64) { 
-//                s_data[idx] += s_data[idx + 64]; 
-//                s_count[idx] += s_count[idx + 64];
-//            } 
-//            __syncthreads(); 
-//            #endif
-//
-//            if (idx < 32){
-//                if (THREADS4 >= 64){
-//                    s_data[idx] += s_data[idx + 32];
-//                    s_count[idx] += s_count[idx + 32];
-//                }
-//                if (THREADS4 >= 32){
-//                    s_data[idx] += s_data[idx + 16];
-//                    s_count[idx] += s_count[idx + 16];
-//                }
-//                if (THREADS4 >= 16){
-//                    s_data[idx] += s_data[idx + 8];
-//                    s_count[idx] += s_count[idx + 8];
-//                }
-//                if (THREADS4 >= 8){
-//                    s_data[idx] += s_data[idx + 4];
-//                    s_count[idx] += s_count[idx + 4];
-//                }
-//                if (THREADS4 >= 4){
-//                    s_data[idx] += s_data[idx + 2];
-//                    s_count[idx] += s_count[idx + 2];
-//                }
-//                if (THREADS4 >= 2){
-//                    s_data[idx] += s_data[idx + 1];
-//                    s_count[idx] += s_count[idx + 1];
-//                }
-//            }
-//        }
-//        if (idx == 0){
-//            reduction_out[dim * RED_OUT_WIDTH + blockIdx.x * NCLUSTERS + c] = s_data[0];
-//            reduction_counts[c * BLOCKS4 + blockIdx.x] = s_count[0];
-//        } 
-//    }
-//}
 
 
 //-----------------------------------------------------------------------
@@ -504,9 +435,11 @@ __global__ void step4part2(int *cluster_changed, float *reduction_out, int *redu
     int dim = blockIdx.y;
 
     for(int c=0; c<NCLUSTERS; c++){
+        s_data[idx] = 0.0f;
+        s_count[idx] = 0;
         if(cluster_changed[c]){
-            s_data[idx] = 0.0f;
-            s_count[idx] = 0;
+//            s_data[idx] = 0.0f;
+//            s_count[idx] = 0;
             if(idx < BLOCKS4){
                 // straight copy of data into shared memory
                 s_data[idx] = reduction_out[dim*RED_OUT_WIDTH + idx*NCLUSTERS + c];
@@ -579,77 +512,6 @@ __global__ void step4part2(int *cluster_changed, float *reduction_out, int *redu
     }
 }
     
-//    // loop over all clusters
-//    for(int c=0; c<NCLUSTERS; c++){
-//        if(!cluster_changed[c]) continue;
-//        
-//        // do one addition while bringing data into shared memory
-//        s_data[idx] = reduction_out[dim*RED_OUT_WIDTH + idx*NCLUSTERS + c]
-//                        + reduction_out[dim*RED_OUT_WIDTH + (idx+THREADS4)*NCLUSTERS + c];
-//        s_count[idx] = reduction_counts[c*BLOCKS4 + idx] 
-//                        + reduction_counts[c*BLOCKS4 + idx + THREADS4];
-//        __syncthreads();
-//
-//        #if (THREADS4 >= 512) 
-//        if (idx < 256) { 
-//            s_data[idx] += s_data[idx + 256]; 
-//            s_count[idx] += s_count[idx + 256];
-//        }
-//        __syncthreads();
-//        #endif
-//
-//        #if (THREADS4 >= 256) 
-//        if (idx < 128) { 
-//            s_data[idx] += s_data[idx+128]; 
-//            s_count[idx] += s_count[idx + 128];
-//        } 
-//        __syncthreads(); 
-//        #endif
-//
-//        #if (THREADS4 >= 128) 
-//        if (idx < 64) { 
-//            s_data[idx] += s_data[idx + 64]; 
-//            s_count[idx] += s_count[idx + 64];
-//        } 
-//        __syncthreads(); 
-//        #endif
-//
-//        if (idx < 32){
-//            if (THREADS4 >= 64){
-//                s_data[idx] += s_data[idx + 32];
-//                s_count[idx] += s_count[idx + 32];
-//            }
-//            if (THREADS4 >= 32){
-//                s_data[idx] += s_data[idx + 16];
-//                s_count[idx] += s_count[idx + 16];
-//            }
-//            if (THREADS4 >= 16){
-//                s_data[idx] += s_data[idx + 8];
-//                s_count[idx] += s_count[idx + 8];
-//            }
-//            if (THREADS4 >= 8){
-//                s_data[idx] += s_data[idx + 4];
-//                s_count[idx] += s_count[idx + 4];
-//            }
-//            if (THREADS4 >= 4){
-//                s_data[idx] += s_data[idx + 2];
-//                s_count[idx] += s_count[idx + 2];
-//            }
-//            if (THREADS4 >= 2){
-//                s_data[idx] += s_data[idx + 1];
-//                s_count[idx] += s_count[idx + 1];
-//            }
-//        }
-//
-//        if(idx == 0){
-//            if(s_count[0] == 0){
-//                new_clusters[dim * NCLUSTERS + c] = clusters[dim*NCLUSTERS + c];
-//            }else{
-//                new_clusters[dim * NCLUSTERS + c] = s_data[0] / s_count[0];
-//            }
-//        }
-//    }
-//}
 
 //-----------------------------------------------------------------------
 //                                calc movement

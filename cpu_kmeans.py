@@ -20,7 +20,8 @@ def bounded_kmeans_cpu(data, clusters, iterations):
     # kmeans_cpu(data, clusters, iterations) returns (clusters, labels)
     
     for i in range(iterations):
-        assign = bounded_assign_cpu(data, clusters, assign)
+        #assign = bounded_assign_cpu(data, clusters, assign)
+        assign = assign_cpu(data,clusters)
         clusters = calc_cpu(data, assign, clusters)
     assign = np.array(assign).reshape(data.shape[1],)
     clusters = np.array(clusters).astype(np.float32)
