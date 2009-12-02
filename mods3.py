@@ -1,14 +1,28 @@
 from pycuda.compiler import SourceModule
 from looper import loop
 
+def copy_to_shared(strGlobal, strShared, strSize):
+    # Returns a code segment to copy from the global to shared memory
+
+    # strGlobal is the global address, as a string,
+    # strShared is the shared memory address as a string, and
+    # strSize is the number of elements, as a string
+    
+    return """
+    for(int idx = threadIdx.x; idx < """ + strSize + """; idx += blockDim.x){
+        """ + strShared + """[idx] = """ + strGlobal + """[idx];
+    }
+    __syncthreads();
+    """
+
+
 #------------------------------------------------------------------------------------
 #                                   source modules
 #------------------------------------------------------------------------------------
 
-def get_ccdist_module(nDim, nPts, nClusters, blocksize_ccdist, blocksize_init, 
-                        blocksize_step4, seqcount_step4, gridsize_step4, 
-                        blocksize_step4part2, blocksize_step56,
-                        blocksize_calcm, useTextureForData):
+def get_big_module(nDim, nPts, nClusters,
+                    blocksize_step4, seqcount_step4, gridsize_step4, 
+                    blocksize_step4part2, useTextureForData):
     # module to calculate distances between each cluster and half distance to closest
     
     modString = """
@@ -17,26 +31,12 @@ def get_ccdist_module(nDim, nPts, nClusters, blocksize_ccdist, blocksize_init,
 #define NDIM           """ + str(nDim)                                     + """
 #define NPTS           """ + str(nPts)                                     + """
 #define CLUSTERS_SIZE  """ + str(nClusters*nDim)                           + """
-#define CLUSTER_CHUNKS """ + str(1 + (nClusters*nDim-1)/blocksize_ccdist)  + """
-#define THREADS        """ + str(blocksize_ccdist)                         + """
-
-#define CLUSTER_CHUNKS2 """ + str(1 + (nClusters*nDim-1)/blocksize_init)   + """
-#define THREADS2        """ + str(blocksize_init)                          + """
-
-#define CLUSTER_CHUNKS3 """ + str(1 + (nClusters*nDim-1)/blocksize_init)   + """
-#define THREADS3        """ + str(blocksize_init)                          + """
 
 #define THREADS4        """ + str(blocksize_step4)                         + """
 #define BLOCKS4         """ + str(gridsize_step4)                          + """
 #define SEQ_COUNT4      """ + str(seqcount_step4)                          + """
 #define RED_OUT_WIDTH   """ + str(gridsize_step4*nClusters)                + """
 #define THREADS4PART2   """ + str(blocksize_step4part2)                    + """
-
-#define THREADS4A       """ + str(blocksize_calcm)                         + """
-#define CLUSTER_CHUNKS4A """ + str(1 + (nClusters*nDim-1)/blocksize_calcm) + """
-
-#define CLUSTER_CHUNKS5 """ + str(1 + (nClusters-1)/blocksize_step56)      + """
-#define THREADS5        """ + str(blocksize_step56)                        + """
 
 texture<float, 2, cudaReadModeElementType>texData;
 
@@ -49,15 +49,18 @@ texture<float, 2, cudaReadModeElementType>texData;
 __device__ float calc_dist(float *clusterA, float *clusterB)
 {
     float dist = (clusterA[0]-clusterB[0]) * (clusterA[0]-clusterB[0]);
+
 //    for (int i=1; i<NDIM; i++) {
 //        float diff = clusterA[i*NCLUSTERS] - clusterB[i*NCLUSTERS];
 //        dist += diff*diff;
 //    }
 
+//------------------------------------------------------------------------
 """ + loop(1, nDim, 16, """ 
         dist += (clusterA[{0}*NCLUSTERS] - clusterB[{0}*NCLUSTERS])
                 *(clusterA[{0}*NCLUSTERS] - clusterB[{0}*NCLUSTERS]);
 """        ) + """
+//------------------------------------------------------------------------
 
 
     return sqrt(dist);
@@ -67,15 +70,13 @@ __device__ float calc_dist(float *clusterA, float *clusterB)
 __device__ float dc_dist(float *data, float *cluster)
 {
     float dist = (data[0]-cluster[0]) * (data[0]-cluster[0]);
-//    for (int i=1; i<NDIM; i++) {
-//        float diff = data[i*NPTS] - cluster[i*NCLUSTERS];
-//        dist += diff*diff;
-//    }
 
+//------------------------------------------------------------------------
 """ + loop(1, nDim, 16, """ 
         dist += (data[{0}*NPTS] - cluster[{0}*NCLUSTERS])
                 *(data[{0}*NPTS] - cluster[{0}*NCLUSTERS]);
 """        ) + """
+//------------------------------------------------------------------------
 
     return sqrt(dist);
 }
@@ -92,7 +93,6 @@ __device__ float dc_dist_tex(int pt, float *cluster)
 }
 
 
-
 //-----------------------------------------------------------------------
 //                             ccdist
 //-----------------------------------------------------------------------
@@ -104,17 +104,14 @@ __global__ void ccdist(float *clusters, float *cc_dists, float *hdClosest)
 {
     // copy cluster to shared memory
     __shared__ float s_clusters[CLUSTERS_SIZE];
-    int idx = threadIdx.x;
-    for(int c = 0; c < CLUSTER_CHUNKS; c++, idx += THREADS){
-        if(idx < CLUSTERS_SIZE){
-            s_clusters[idx] = clusters[idx];
-        }
-    }
-    __syncthreads();
+
+""" + copy_to_shared("clusters", "s_clusters", "CLUSTERS_SIZE") + """
+
+//    copy_clusters_to_shared(clusters, s_clusters);
 
     // calculate distance between this cluster and all lower clusters
     // then store the distance in the table in two places: (this, lower) and (lower, this)
-    idx = threadIdx.x + blockDim.x * blockIdx.x;
+    int idx = threadIdx.x + blockDim.x * blockIdx.x;
     if(idx >= NCLUSTERS) return;
     for(int c=0; c<idx; c++){
         float d = 0.5f * calc_dist(s_clusters+c, s_clusters + idx); // store 1/2 distance
@@ -158,25 +155,16 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
                                 float *ccdist, float *hdClosest, int *assignments, 
                                 float *lower, float *upper)
 {
+//    int idx = threadIdx.x;
 
-//    int idx = threadIdx.x + blockDim.x * blockIdx.x;
-//    if(idx >= NPTS) return;
-//    for(int d = 0; d<NDIM; d++){
-//        dataout[d*NPTS + idx] = tex2D(texData, d, idx);
-//    }
-    
     // copy cluster to shared memory
     __shared__ float s_clusters[CLUSTERS_SIZE];
-    int idx = threadIdx.x;
-    for(int c = 0; c < CLUSTER_CHUNKS2; c++, idx += THREADS2){
-        if(idx < CLUSTERS_SIZE){
-            s_clusters[idx] = clusters[idx];
-        }
-    }
-    __syncthreads();
+//    copy_clusters_to_shared(clusters, s_clusters);
+
+""" + copy_to_shared("clusters", "s_clusters", "CLUSTERS_SIZE") + """
 
     // calculate distance to each cluster
-    idx = threadIdx.x + blockDim.x * blockIdx.x;
+    int idx = threadIdx.x + blockDim.x * blockIdx.x;
     if (idx >= NPTS) return;
     
     // start with cluster 0 as the closest
@@ -233,17 +221,12 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
 {
     // copy clusters to shared memory
     __shared__ float s_clusters[CLUSTERS_SIZE];
-//    __shared__ int s_cluster_changed[NCLUSTERS];
-    int idx = threadIdx.x;
-    for(int c = 0; c < CLUSTER_CHUNKS3; c++, idx += THREADS3){
-        if(idx < CLUSTERS_SIZE){
-            s_clusters[idx] = clusters[idx];
-        }
-    }
-    __syncthreads();
+//    copy_clusters_to_shared(clusters, s_clusters);
+
+""" + copy_to_shared("clusters", "s_clusters", "CLUSTERS_SIZE") + """
     
     // idx ranges over the data points
-    idx = threadIdx.x + blockIdx.x * blockDim.x;
+    int idx = threadIdx.x + blockIdx.x * blockDim.x;
     if(idx >= NPTS) return;
     
     float ux = upper[idx];
@@ -287,8 +270,6 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
             if(d_x_c < d_x_cx){
                 // assign x to c
                 // mark both c and cx as having changed
-//                s_cluster_changed[c] = 1;
-//                s_cluster_changed[cx] = 1;
                 ux = d_x_c;
                 cx = c;
                 rx = 0;
@@ -297,7 +278,10 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
         }
     }
     __syncthreads();
+
     upper[idx] = ux;
+    
+    // check for new assignment and flag old and new cluster as changed
     if(cx != assignments[idx]){
         cluster_changed[cx] = 1;
         cluster_changed[assignments[idx]] = 1;
@@ -306,14 +290,6 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
     badUpper[idx] = rx;
     
     __syncthreads();
-    
-//    // update the global cluster-changed flag
-//    idx = threadIdx.x;
-//    for(int c = 0; c < CLUSTER_CHUNKS3; c++, idx += THREADS3){
-//        if(idx < CLUSTERS_SIZE && s_cluster_changed[idx]){
-//            cluster_changed[idx] = 1;
-//        }
-//    }
 }
 
 //-----------------------------------------------------------------------
@@ -346,7 +322,7 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
                 if(iData >= NPTS) break;
                 if(assignments[iData] == c){
                     count += 1;
-//                    tot += tex2D(texData, dim, iData);
+
 """
     if useTextureForData:
         modString += "tot += tex2D(texData, dim, iData);\n"
@@ -439,8 +415,6 @@ __global__ void step4part2(int *cluster_changed, float *reduction_out, int *redu
         s_data[idx] = 0.0f;
         s_count[idx] = 0;
         if(cluster_changed[c]){
-//            s_data[idx] = 0.0f;
-//            s_count[idx] = 0;
             if(idx < BLOCKS4){
                 // straight copy of data into shared memory
                 s_data[idx] = reduction_out[dim*RED_OUT_WIDTH + idx*NCLUSTERS + c];
@@ -522,18 +496,15 @@ __global__ void calc_movement(float *clusters, float *new_clusters, float *clust
 {
     // copy clusters to shared memory
     __shared__ float s_clusters[CLUSTERS_SIZE];
-    int idx = threadIdx.x;
-    for(int c = 0; c < CLUSTER_CHUNKS4A; c++, idx += THREADS4A){
-        if(idx < CLUSTERS_SIZE){
-            s_clusters[idx] = clusters[idx];
-        }
-    }
-    __syncthreads();
+//    copy_clusters_to_shared(clusters, s_clusters);
+
+""" + copy_to_shared("clusters", "s_clusters", "CLUSTERS_SIZE") + """
     
     int cluster = threadIdx.x + blockDim.x*blockIdx.x;
     if(cluster_changed[cluster])
         cluster_movement[cluster] = calc_dist(s_clusters + cluster, new_clusters + cluster);
 }
+
 
 //-----------------------------------------------------------------------
 //                                step56
@@ -547,24 +518,20 @@ __global__ void step56(int *assignment,
 {
     // copy cluster movement to shared memory
     __shared__ float s_cluster_movement[NCLUSTERS];
-//    __shared__ int s_cluster_movement_flag[NCLUSTERS];    // CHANGE#2
-    int idx = threadIdx.x;
-    for(int c = 0; c < CLUSTER_CHUNKS5; c++, idx += THREADS5){
-        if(idx < NCLUSTERS){
-            s_cluster_movement[idx] = cluster_movement[idx];
-//            if(s_cluster_movement[idx] > 0.f)
-//                s_cluster_movement_flag[idx] = 1;
-        }
-    }
-    __syncthreads();
+//    for(int idx = threadIdx.x; idx < NCLUSTERS; idx += blockDim.x){
+//        s_cluster_movement[idx] = cluster_movement[idx];
+//    }
+//    __syncthreads();
+//    copy_to_shared(cluster_movement, s_cluster_movement, NCLUSTERS);
 
-    idx = threadIdx.x + blockDim.x * blockIdx.x;
+""" + copy_to_shared("cluster_movement", "s_cluster_movement", "NCLUSTERS") + """
+
+    int idx = threadIdx.x + blockDim.x * blockIdx.x;
     if (idx >= NPTS) return;
     
     // loop through all clusters and update the lower bound
     for(int c=0; c < NCLUSTERS; c++){
         if(s_cluster_movement[c] > 0.0f){
-//        if(s_cluster_movement_flag[c]){
             if(s_cluster_movement[c] < lower[c * NPTS + idx]){
                 lower[c*NPTS + idx] -= s_cluster_movement[c];
             }else{
@@ -573,18 +540,11 @@ __global__ void step56(int *assignment,
         }
     }
     
-//  CHANGE#1
     // update the upper bound for this data point
     if(s_cluster_movement[assignment[idx]] > 0.f){
         upper[idx] += s_cluster_movement[assignment[idx]];
         badUpper[idx] = 1;
     }
-/*
-    upper[idx] += s_cluster_movement[assignment[idx]];
-    
-    // reset the badUpper flag
-    badUpper[idx] = 1;
-*/
 }
 
 """

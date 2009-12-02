@@ -99,18 +99,14 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
     gridsize_step56 = gridsize_init
     
     
-    
     #---------------------------------------------------------------
     #                    prepare source modules
     #---------------------------------------------------------------
     t1 = time.time()
-    mod_ccdist = kernels.get_ccdist_module(nDim, nPts, nClusters, blocksize_ccdist, blocksize_init, 
+    mod_ccdist = kernels.get_big_module(nDim, nPts, nClusters,
                                         blocksize_step4, seqcount_step4, gridsize_step4, 
-                                        blocksize_step4part2, blocksize_step56,
-                                        blocksize_calcm, useTextureForData)
+                                        blocksize_step4part2, useTextureForData)
 
-    #mod_step56 = mods2.get_step56_module(nDim, nPts, nClusters, blocksize_step56)
-    
     ccdist = mod_ccdist.get_function("ccdist")
     calc_hdclosest = mod_ccdist.get_function("calc_hdclosest")
     init = mod_ccdist.get_function("init")
@@ -122,6 +118,7 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
     pycuda.autoinit.context.synchronize()
     t2 = time.time()
     module_time = t2-t1
+
 
     #---------------------------------------------------------------
     #                    setup data on GPU
@@ -402,8 +399,6 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
                 step3_time/iterations, step4_time/iterations, step56_time/iterations
     else:
         return gpu_clusters.get(), gpu_assignments.get()
-
-
 
 
 
