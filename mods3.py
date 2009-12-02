@@ -132,6 +132,7 @@ __global__ void ccdist(float *clusters, float *cc_dists, float *hdClosest)
 __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
 {
     int idx = threadIdx.x + blockIdx.x * blockDim.x;
+    hdClosest[idx] = 1.0e10;
     for(int c=0; c<NCLUSTERS; c++){
         if(c == idx) continue;
         float d = cc_dists[c*NCLUSTERS + idx];      // cc_dists contains 1/2 distance

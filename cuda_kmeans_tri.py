@@ -53,7 +53,7 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
     #---------------------------------------------------------------
     #            set calculation control variables
     #---------------------------------------------------------------
-    useTextureForData = 0
+    useTextureForData = 1
     
     
     # block and grid sizes for the ccdist kernel (also for hdclosest)
@@ -271,6 +271,7 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
         t2 = time.time()
         step3_time += t2-t1
         
+            
         """
         print "gpu_cluster_changed"
         print gpu_cluster_changed.get()
@@ -714,7 +715,7 @@ def verify_clusters(gpu_clusters, cpu_clusters, cpu_assign, verbose = 0, iTest =
     return error
 
 
-def run_tests(nTests, nPts, nDim, nClusters, nReps=1, verbose = VERBOSE, print_times = PRINT_TIMES):
+def run_tests(nTests, nPts, nDim, nClusters, nReps=1, verbose = VERBOSE, print_times = PRINT_TIMES, verify = 1):
     # run_tests(nTests, nPts, nDim, nClusters, nReps [, verbose [, print_times]]
     
     # Generate nPts random data elements with nDim dimensions and nCluster random clusters,
@@ -746,22 +747,21 @@ def run_tests(nTests, nPts, nDim, nClusters, nReps=1, verbose = VERBOSE, print_t
     # repeat this test nTests times
     for iTest in range(nTests):
     
-        #"""
-        #run the cpu algorithm
-        t1 = time.time()
-        (cpu_clusters, cpu_assign) = kmeans_cpu(data, clusters, nReps)
-        cpu_assign.shape = (nPts,)
-        t2 = time.time()
-        cpu_time += t2-t1
-        
-        if verbose:
-            print "------------------------ cpu results ------------------------"
-            print "cpu_assignments"
-            print cpu_assign
-            print "cpu_clusters"
-            print cpu_clusters
-            print "-------------------------------------------------------------"
-        #"""
+        if verify:
+            #run the cpu algorithm
+            t1 = time.time()
+            (cpu_clusters, cpu_assign) = kmeans_cpu(data, clusters, nReps)
+            cpu_assign.shape = (nPts,)
+            t2 = time.time()
+            cpu_time += t2-t1
+            
+            if verbose:
+                print "------------------------ cpu results ------------------------"
+                print "cpu_assignments"
+                print cpu_assign
+                print "cpu_clusters"
+                print cpu_clusters
+                print "-------------------------------------------------------------"
         
         #run the gpu algorithm
         t1 = time.time()
@@ -790,15 +790,15 @@ def run_tests(nTests, nPts, nDim, nClusters, nReps=1, verbose = VERBOSE, print_t
             print "-------------------------------------------------------------"
             
 
-        #"""
-        # calculate the number of data points in each cluster
-        c = np.arange(nClusters)
-        c_counts = np.sum(cpu_assign.reshape(nPts,1) == c, axis=0)
+        if verify:
+            # calculate the number of data points in each cluster
+            c = np.arange(nClusters)
+            c_counts = np.sum(cpu_assign.reshape(nPts,1) == c, axis=0)
 
-        # verify the results...
-        nErrors += verify_assignments(gpu_assign.get(), cpu_assign, data, gpu_clusters, cpu_clusters, verbose, iTest)
-        nErrors += verify_clusters(gpu_clusters, cpu_clusters, cpu_assign, verbose, iTest)
-        #"""
+            # verify the results...
+            nErrors += verify_assignments(gpu_assign.get(), cpu_assign, data, gpu_clusters, cpu_clusters, verbose, iTest)
+            nErrors += verify_clusters(gpu_clusters, cpu_clusters, cpu_assign, verbose, iTest)
+
 
     if print_times:
         print "\n---------------------------------------------"
@@ -806,8 +806,10 @@ def run_tests(nTests, nPts, nDim, nClusters, nReps=1, verbose = VERBOSE, print_t
         print "nDim      =", nDim
         print "nClusters =", nClusters
         print "nReps     =", nReps
-        print "average cpu time (ms) =", cpu_time/nTests*1000.
-        #print "average cpu time (ms) = N/A"
+        if verify:
+            print "average cpu time (ms) =", cpu_time/nTests*1000.
+        else:
+            print "average cpu time (ms) = N/A"
         print "average gpu time (ms) =", gpu_time/nTests*1000.
         print "       data time (ms) =", gpu_data_time/nTests*1000.
         print "     module time (ms) =", gpu_module_time/nTests*1000.
@@ -826,32 +828,37 @@ def run_tests(nTests, nPts, nDim, nClusters, nReps=1, verbose = VERBOSE, print_t
 #                           multi-tests
 #----------------------------------------------------------------------------------------
 
-def quiet_run(nTests, nPts, nDim, nClusters, nReps, ptimes = PRINT_TIMES):
+def quiet_run(nTests, nPts, nDim, nClusters, nReps, ptimes = PRINT_TIMES, verify = 1):
     # quiet_run(nTests, nPts, nDim, nClusters, nReps [, ptimes]):
     print "[TEST]({0:3},{1:8},{2:5},{3:5}, {4:5})...".format(nTests, nPts, nDim, nClusters, nReps),
     try:
-        if run_tests(nTests, nPts, nDim, nClusters, nReps, verbose = 0, print_times = ptimes) == 0:
-            print "OK"
+        if run_tests(nTests, nPts, nDim, nClusters, nReps, 0, ptimes, verify) == 0:
+            if verify:
+                print "OK"
+            else:
+                print ""
         else:
             print "*** ERROR ***"
     except cuda.LaunchError:
         print "launch error"
     
-def quiet_runs(nTest_list, nPts_list, nDim_list, nClusters_list, nRep_list, print_it = PRINT_TIMES):
+def quiet_runs(nTest_list, nPts_list, nDim_list, nClusters_list, nRep_list, print_it = PRINT_TIMES, verify = 1):
     # quiet_runs(nTest_list, nPts_list, nDim_list, nClusters_list [, print_it]):
     # when number of tests is -1, it will be calculated based on the size of the problem
     for t in nTest_list:
         for pts in nPts_list:
             for dim in nDim_list:
+                if dim > pts/2:
+                    continue
                 for clst in nClusters_list:
-                    if clst > pts or clst * dim > 4000:
+                    if clst >= pts or clst * dim > 4000:
                         continue
                     for rep in nRep_list:
                         if t < 0:
                             tt = max(1, min(10, 10000000/(pts*dim*clst)))
                         else:
                             tt = t
-                        quiet_run(tt, pts, dim, clst, rep, ptimes = print_it);
+                        quiet_run(tt, pts, dim, clst, rep, print_it, verify);
 
 def run_all(pFlag = 1):
     quiet_run(1, 100, 3, 3, 1, ptimes = pFlag)
@@ -889,9 +896,13 @@ def run_reps(pFlag = 1):
     quiet_run(1, 100, 600, 5, 5, ptimes = pFlag)
     quiet_run(1, 10, 20, 30, 5, ptimes = pFlag)
     
-def timings(t = 0):
+def timings(t = 0, v = 1):
     # run a bunch of tests with optional timing
-    quiet_runs([1], [10, 100, 1000, 10000], [2, 8, 32], [2, 8, 32], [1, 4], print_it = t)
+    quiet_runs([1], [100, 1000, 10000], [2, 64, 512], [3, 20, 100], [4, 16, 64], t, v)
+    
+def timings2(t = 0, v = 1):
+    # run a bunch of tests with optional timing
+    quiet_runs([1], [100, 1000, 10000, 100000], [16, 256], [10, 60], [4, 16, 64], t, v)
     
 def quickTimes(nReps = 5):
     if quickRun() > 0:
