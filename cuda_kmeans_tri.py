@@ -11,7 +11,7 @@ import numpy as np
 import math
 import time
 
-import mods3 as kernels
+import mods4 as kernels
 
 VERBOSE = 0
 PRINT_TIMES = 0
@@ -227,25 +227,8 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
             pycuda.autoinit.context.synchronize()
             t2 = time.time()
             hdclosest_time += t2-t1
+
             
-        """
-        print "Just before step 3=========================================="
-        print "gpu_clusters"
-        print gpu_clusters
-        print "gpu_ccdist"
-        print gpu_ccdist
-        print "gpu_hdClosest"
-        print gpu_hdClosest
-        print "gpu_assignments"
-        print gpu_assignments
-        print "gpu_lower"
-        print gpu_lower
-        print "gpu_upper"
-        print gpu_upper
-        print "gpu_badUpper"
-        print gpu_badUpper
-        """
-        
         t1 = time.time()
         if i > 0:
             gpu_cluster_changed.fill(0)
@@ -256,40 +239,16 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
                     grid = (gridsize_step3, 1),
                     texrefs=[texrefData])
         else:
-            #print "step3 blocksize =", blocksize_step3
-            #print "step3 gridsize =", gridsize_step3
             step3(gpu_data, gpu_clusters, gpu_ccdist, gpu_hdClosest, gpu_assignments,
                     gpu_lower, gpu_upper, gpu_badUpper,  gpu_cluster_changed,
                     block = (blocksize_step3, 1, 1),
                     grid = (gridsize_step3, 1))
         
         pycuda.autoinit.context.synchronize()
-        #print "past step3"
         t2 = time.time()
         step3_time += t2-t1
         
             
-        """
-        print "gpu_cluster_changed"
-        print gpu_cluster_changed.get()
-        """
-        
-        """
-        print "Just before step 4=========================================="
-        print "gpu_assignments"
-        print gpu_assignments
-        print "gpu_lower"
-        print gpu_lower
-        print "gpu_upper"
-        print gpu_upper
-        print "gpu_badUpper"
-        print gpu_badUpper
-        print "gpu_clusters"
-        print gpu_clusters
-        print "gpu_cluster_changed"
-        print gpu_cluster_changed
-        """        
-    
         t1 = time.time()
         
         """
@@ -311,35 +270,11 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
                 block = (blocksize_step4, 1, 1),
                 grid = (gridsize_step4, nDim))
         
-        """
-        print "shape of gpu_reduction_out"
-        print gpu_reduction_out.shape
-        print "gpu_reduction_out"
-        print gpu_reduction_out
-
-        print "shape of gpu_reduction_counts"
-        print gpu_reduction_counts.shape
-        print "gpu_reduction_counts"
-        print gpu_reduction_counts
-        
-        #print "gpu_cluster_changed"
-        #print gpu_cluster_changed
-
-        print "step4, part 2:"
-        print "blocksize =", blocksize_step4part2
-        print "gridsize = ", (1, nDim)
-        """
-        
         step4part2(gpu_cluster_changed, gpu_reduction_out, gpu_reduction_counts, 
                 gpu_clusters2, gpu_clusters,
                 block = (blocksize_step4part2, 1, 1),
                 grid = (1, nDim))
         
-        """
-        print "new clusters"
-        print gpu_clusters2
-        """
-
         calc_movement(gpu_clusters, gpu_clusters2, gpu_cluster_movement, gpu_cluster_changed,
                 block = (blocksize_calcm, 1, 1),
                 grid = (gridsize_calcm, 1))
@@ -347,14 +282,6 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
         pycuda.autoinit.context.synchronize()
         t2 = time.time()
         step4_time += t2-t1
-        
-        """
-        print "Just before step 5=========================================="
-        print "gpu_cluste_movement"
-        print gpu_cluster_movement
-        print "gpu_clusters"
-        print gpu_clusters2
-        """
     
         t1 = time.time() #------------------------------------------------------------------
         if useTextureForData:
@@ -372,20 +299,6 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
         t2 = time.time()
         step56_time += t2-t1 #--------------------------------------------------------------
         
-        """
-        print "Just after step 6=========================================="
-        print "gpu_lower"
-        print gpu_lower
-        print "gpu_upper"
-        print gpu_upper
-        print "gpu_badUpper"
-        print gpu_badUpper
-        """
-
-        #if gpuarray.sum(gpu_cluster_movement).get() < 1.e-7:
-            #print "No change in clusters!"
-            #break
-            
         # prepare for next iteration
         temp = gpu_clusters
         gpu_clusters = gpu_clusters2
@@ -410,6 +323,7 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
     
 def run_tests1(nTests, nPts, nDim, nClusters, nReps=1, verbose = VERBOSE, print_times = PRINT_TIMES):
     # run_tests(nTests, nPts, nDim, nClusters, nReps [, verbose [, print_times]]
+    # Runs one repition and checks various intermdiate values against a cpu calculation
     
     if nReps > 1:
         print "This method only runs test for nReps == 1"
@@ -625,6 +539,7 @@ def run_tests1(nTests, nPts, nDim, nClusters, nReps=1, verbose = VERBOSE, print_
     return nErrors
 
 
+
 def verify_assignments(gpu_assign, cpu_assign, data, gpu_clusters, cpu_clusters, verbose = 0, iTest = -1): 
     # check that assignments are equal
 
@@ -667,6 +582,7 @@ def verify_assignments(gpu_assign, cpu_assign, data, gpu_clusters, cpu_clusters,
                 print "Test", iTest,
             print "Cluster assignment is OK"
     return error
+
 
 def verify_clusters(gpu_clusters, cpu_clusters, cpu_assign, verbose = 0, iTest = -1):
     # check that clusters are equal
@@ -715,6 +631,7 @@ def run_tests(nTests, nPts, nDim, nClusters, nReps=1, verbose = VERBOSE, print_t
     
     # Generate nPts random data elements with nDim dimensions and nCluster random clusters,
     # then run kmeans for nReps and compare gpu and cpu results.  This is repeated nTests times
+    
     cpu_time = 0.
     gpu_time = 0.
     
