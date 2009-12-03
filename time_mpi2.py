@@ -9,10 +9,10 @@ def quiet_runs(nPts_list, nDim_list, nClusters_list, nRep_list):
     print "mpi_kmeans timing runs"
     for pts in nPts_list:
         for dim in nDim_list:
-            if dim > pts/2:
+            if dim >= pts:
                 continue
             for clst in nClusters_list:
-                if clst >= pts or clst * dim > 4000:
+                if clst >= pts:
                     continue
                 for rep in nRep_list:
                     data = N.random.rand(pts, dim)
@@ -22,5 +22,4 @@ def quiet_runs(nPts_list, nDim_list, nClusters_list, nRep_list):
                     print "[MPIKMEANS]({0:8},{1:5},{2:5},{3:5})...".format(pts, dim, clst, rep),
                     print 1000.*(t2-t1)
                     
-def timings():
-    quiet_runs([100, 1000, 10000, 100000], [2, 64, 512], [3, 20, 100], [4, 16, 64])
+quiet_runs([100, 1000, 10000, 100000], [4, 20, 100], [5, 15, 45], [4, 12, 36])

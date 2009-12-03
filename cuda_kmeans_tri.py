@@ -16,7 +16,11 @@ import mods4 as kernels
 VERBOSE = 0
 PRINT_TIMES = 0
 
-
+# Set the CPU_SIZE_LIMIT to limit the size of problem that will be calculated on the CPU
+# This can be set to a lower value to save time, or a maximum value based on the amount of
+# CPU memory
+#CPU_SIZE_LIMIT = 250000000  #maximum
+CPU_SIZE_LIMIT =   1000000  #only check smaller problems
 
 #------------------------------------------------------------------------------------
 #                kmeans using triangle inequality algorithm on the gpu
@@ -53,7 +57,10 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
     #---------------------------------------------------------------
     #            set calculation control variables
     #---------------------------------------------------------------
-    useTextureForData = 1
+    useTextureForData = 0
+
+    if(nPts > 32768):
+        useTextureForData = 0
     
     
     # block and grid sizes for the ccdist kernel (also for hdclosest)
@@ -133,10 +140,15 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
         texrefData = mod_ccdist.get_texref("texData")
         cuda.matrix_to_texref(data, texrefData, order="F")
     else:
-        gpu_data = gpuarray.to_gpu(data)
+        data_pl = cuda.pagelocked_empty_like(data)
+        data_pl[:,:] = data;
+        gpu_data = gpuarray.to_gpu(data_pl)
+
+    clusters_pl = cuda.pagelocked_empty_like(clusters)
+    clusters_pl[:,:] = clusters
+    gpu_clusters = gpuarray.to_gpu(clusters_pl)
 
 
-    gpu_clusters = gpuarray.to_gpu(clusters)
     gpu_assignments = gpuarray.zeros((nPts,), np.int32)         # cluster assignment
     gpu_lower = gpuarray.zeros((nClusters, nPts), np.float32)   # lower bounds on distance between 
                                                                 # point and each cluster
@@ -632,6 +644,10 @@ def run_tests(nTests, nPts, nDim, nClusters, nReps=1, verbose = VERBOSE, print_t
     # Generate nPts random data elements with nDim dimensions and nCluster random clusters,
     # then run kmeans for nReps and compare gpu and cpu results.  This is repeated nTests times
     
+    if(nPts * nDim *nClusters > CPU_SIZE_LIMIT):
+        #print "Too big to verify wiht cpu calculation"
+        verify = 0  # too big to run on cpu
+        
     cpu_time = 0.
     gpu_time = 0.
     
@@ -733,7 +749,10 @@ def run_tests(nTests, nPts, nDim, nClusters, nReps=1, verbose = VERBOSE, print_t
         print "     step56 time (ms) =", gpu_step56_time/nTests*1000.        
         print "---------------------------------------------"
 
-    return nErrors
+    if verify:
+        return nErrors
+    else:
+        return -1
 
 
 #----------------------------------------------------------------------------------------
@@ -744,13 +763,17 @@ def quiet_run(nTests, nPts, nDim, nClusters, nReps, ptimes = PRINT_TIMES, verify
     # quiet_run(nTests, nPts, nDim, nClusters, nReps [, ptimes]):
     print "[TEST]({0:3},{1:8},{2:5},{3:5}, {4:5})...".format(nTests, nPts, nDim, nClusters, nReps),
     try:
-        if run_tests(nTests, nPts, nDim, nClusters, nReps, 0, ptimes, verify) == 0:
+        result =  run_tests(nTests, nPts, nDim, nClusters, nReps, 0, ptimes, verify)
+        if result == 0:
             if verify:
                 print "OK"
             else:
                 print ""
         else:
-            print "*** ERROR ***"
+            if result < 0:
+                print "(not checked)"
+            else:
+                print "*** ERROR ***"
     except cuda.LaunchError:
         print "launch error"
     
@@ -760,10 +783,10 @@ def quiet_runs(nTest_list, nPts_list, nDim_list, nClusters_list, nRep_list, prin
     for t in nTest_list:
         for pts in nPts_list:
             for dim in nDim_list:
-                if dim > pts/2:
+                if dim >= pts:
                     continue
                 for clst in nClusters_list:
-                    if clst >= pts or clst * dim > 4000:
+                    if clst >= pts:
                         continue
                     for rep in nRep_list:
                         if t < 0:
@@ -808,25 +831,25 @@ def run_reps(pFlag = 1):
     quiet_run(1, 100, 600, 5, 5, ptimes = pFlag)
     quiet_run(1, 10, 20, 30, 5, ptimes = pFlag)
     
-def timings(t = 0, v = 1):
+def timings(t = 1, v = 0):
     # run a bunch of tests with optional timing
-    quiet_runs([1], [100, 1000, 10000], [2, 64, 512], [3, 20, 100], [4, 16, 64], t, v)
+    quiet_runs([1], [100, 1000, 10000, 100000], [4, 20, 100], [5, 15, 45], [4, 8, 16], t, v)
     
-def timings2(t = 0, v = 1):
-    # run a bunch of tests with optional timing
-    quiet_runs([1], [100, 1000, 10000, 100000], [16, 256], [10, 60], [4, 16, 64], t, v)
-    
+def prime_mods(t = 0, v = 0):
+    # run each test once to get the module compiled and on the gpu
+    quiet_runs([1], [100, 1000, 10000, 100000], [4, 20, 100], [5, 15, 45], [1], t, v)
+
 def quickTimes(nReps = 5):
     if quickRun() > 0:
         print "***ERROR***"
     else:
         quiet_run(3, 1000, 60, 20, nReps, 1)
         quiet_run(3, 1000, 600, 2, nReps, 1)
-        quiet_run(3, 1000, 6, 200, nReps, 1)
+        quiet_run(3, 1000, 60, 200, nReps, 1)
         quiet_run(3, 10000, 60, 20, nReps, 1)
         quiet_run(3, 10000, 600, 2, nReps, 1)
         quiet_run(3, 10000, 6, 200, nReps, 1)
-        #quiet_run(3, 100000, 6, 20, nReps, 1)
+        quiet_run(3, 10000, 1000, 100, nReps, 1)
         quiet_run(3, 30000, 6, 20, nReps, 1)
 
 def quickRun():
