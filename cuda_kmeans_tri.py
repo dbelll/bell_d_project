@@ -3,6 +3,7 @@ import pycuda.autoinit
 import pycuda.gpuarray as gpuarray
 from pycuda.compiler import SourceModule
 from pycuda.reduction import ReductionKernel
+
 from cpu_kmeans import kmeans_cpu
 from cpu_kmeans import assign_cpu
 from cpu_kmeans import calc_cpu
@@ -58,6 +59,8 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
     #            set calculation control variables
     #---------------------------------------------------------------
     useTextureForData = 0
+    
+    usePageLockedMemory = 1
 
     if(nPts > 32768):
         useTextureForData = 0
@@ -140,13 +143,19 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
         texrefData = mod_ccdist.get_texref("texData")
         cuda.matrix_to_texref(data, texrefData, order="F")
     else:
-        data_pl = cuda.pagelocked_empty_like(data)
-        data_pl[:,:] = data;
-        gpu_data = gpuarray.to_gpu(data_pl)
+        if usePageLockedMemory:
+            data_pl = cuda.pagelocked_empty_like(data)
+            data_pl[:,:] = data;
+            gpu_data = gpuarray.to_gpu(data_pl)
+        else:
+            gpu_data = gpuarray.to_gpu(data)
 
-    clusters_pl = cuda.pagelocked_empty_like(clusters)
-    clusters_pl[:,:] = clusters
-    gpu_clusters = gpuarray.to_gpu(clusters_pl)
+    if usePageLockedMemory:
+        clusters_pl = cuda.pagelocked_empty_like(clusters)
+        clusters_pl[:,:] = clusters
+        gpu_clusters = gpuarray.to_gpu(clusters_pl)
+    else:
+        gpu_clusters = gpuarray.to_gpu(clusters)
 
 
     gpu_assignments = gpuarray.zeros((nPts,), np.int32)         # cluster assignment
@@ -833,11 +842,11 @@ def run_reps(pFlag = 1):
     
 def timings(t = 1, v = 0):
     # run a bunch of tests with optional timing
-    quiet_runs([1], [100, 1000, 10000, 100000], [4, 20, 100], [5, 15, 45], [4, 8, 16], t, v)
+    quiet_runs([1], [100, 1000, 10000, 100000], [4, 20, 100, 500], [5, 15, 45, 135], [4, 8, 16, 32], t, v)
     
 def prime_mods(t = 0, v = 0):
     # run each test once to get the module compiled and on the gpu
-    quiet_runs([1], [100, 1000, 10000, 100000], [4, 20, 100], [5, 15, 45], [1], t, v)
+    quiet_runs([1], [100, 1000, 10000, 100000], [4, 20, 100, 500], [5, 15, 45, 135], [1], t, v)
 
 def quickTimes(nReps = 5):
     if quickRun() > 0:

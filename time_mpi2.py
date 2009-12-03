@@ -22,4 +22,4 @@ def quiet_runs(nPts_list, nDim_list, nClusters_list, nRep_list):
                     print "[MPIKMEANS]({0:8},{1:5},{2:5},{3:5})...".format(pts, dim, clst, rep),
                     print 1000.*(t2-t1)
                     
-quiet_runs([100, 1000, 10000, 100000], [4, 20, 100], [5, 15, 45], [4, 12, 36])
+quiet_runs([100, 1000, 10000, 100000], [4, 20, 100, 500], [5, 15, 45, 135], [4, 8, 16, 32])

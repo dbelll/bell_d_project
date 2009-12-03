@@ -1,24 +1,6 @@
 from pycuda.compiler import SourceModule
-from looper import loop
 
-
-def copy_to_shared(strType, strGlobal, strShared, size):
-    # Returns a code segment to copy from global to shared memory
-    # strType is the data type of the global and shared memory
-    # strGlobal is the global address, as a string,
-    # strShared is the shared memory address as a string, and
-    # strSize is the number of elements, as a string
-
-    if(size < 16384/4 - 64):
-        return """
-    __shared__ """ + strType + " " + strShared + "[" + str(size) + """];
-    for(int idx = threadIdx.x; idx < """ + str(size) + """; idx += blockDim.x){
-        """ + strShared + """[idx] = """ + strGlobal + """[idx];
-    }
-    __syncthreads();
-    """
-    else:
-        return strType + "* " + strShared + " = " + strGlobal + ";\n"
+import meta_utils as meta
 
 
 #------------------------------------------------------------------------------------
@@ -93,7 +75,7 @@ __device__ float dc_dist(float *data, float *cluster)
     float dist = (data[0]-cluster[0]) * (data[0]-cluster[0]);
 
 //------------------------------------------------------------------------
-""" + loop(1, nDim, 16, """ 
+""" + meta.loop(1, nDim, 16, """ 
         dist += (data[{0}*NPTS] - cluster[{0}*NCLUSTERS])
                 *(data[{0}*NPTS] - cluster[{0}*NCLUSTERS]);
 """        ) + """
@@ -113,16 +95,6 @@ __device__ float dc_dist_tex(int pt, float *cluster)
     return sqrt(dist);
 }
 
-__device__ void copy_to_shared2(float *clusters, float *s_clusters, int start, int width, int row_stride)
-{
-    __syncthreads();
-    for(int idx = threadIdx.x; idx < width * NDIM; idx += blockDim.x){
-        int iGlobal = start + (idx % width) + (idx / width) * row_stride;
-        s_clusters[idx] = clusters[iGlobal];
-    }
-    __syncthreads();
-}
-
 
 //-----------------------------------------------------------------------
 //                             ccdist
@@ -136,7 +108,7 @@ __device__ void copy_to_shared2(float *clusters, float *s_clusters, int start, i
 // Calculate cluster - cluster distances
 __global__ void ccdist(float *clusters, float *cc_dists, float *hdClosest)
 {
-""" + copy_to_shared("float", "clusters", "s_clusters", nClusters*nDim) + """
+""" + meta.copy_to_shared("float", "clusters", "s_clusters", nClusters*nDim) + """
 
     // calculate distance between this cluster and all lower clusters
     // then store the distance in the table in two places: (this, lower) and (lower, this)
@@ -184,7 +156,7 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
                                 float *ccdist, float *hdClosest, int *assignments, 
                                 float *lower, float *upper)
 {
-""" + copy_to_shared("float", "clusters", "s_clusters", nClusters*nDim) + """
+""" + meta.copy_to_shared("float", "clusters", "s_clusters", nClusters*nDim) + """
 
     // calculate distance to each cluster
     int idx = threadIdx.x + blockDim.x * blockIdx.x;
@@ -241,7 +213,7 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
                                      float *lower, float *upper, int *badUpper, 
                                      int *cluster_changed)
 {
-""" + copy_to_shared("float", "clusters", "s_clusters", nClusters*nDim) + """
+""" + meta.copy_to_shared("float", "clusters", "s_clusters", nClusters*nDim) + """
     
     // idx ranges over the data points
     int idx = threadIdx.x + blockIdx.x * blockDim.x;
@@ -351,63 +323,14 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
             }
             s_data[idx] = tot;
             s_count[idx] = count;
-            __syncthreads();
+"""
 
-            #if (THREADS4 >= 512) 
-            if (idx < 256) { 
-                s_data[idx] += s_data[idx + 256]; 
-                s_count[idx] += s_count[idx + 256];
+    modString += meta.reduction2("s_data", "s_count", blocksize_step4) + """
+
+            if(idx == 0){
+                reduction_out[dim * RED_OUT_WIDTH + blockIdx.x * NCLUSTERS + c] = s_data[0];
+                reduction_counts[blockIdx.x * NCLUSTERS + c] = s_count[0];
             }
-            __syncthreads();
-            #endif
-
-            #if (THREADS4 >= 256) 
-            if (idx < 128) { 
-                s_data[idx] += s_data[idx+128]; 
-                s_count[idx] += s_count[idx + 128];
-            } 
-            __syncthreads(); 
-            #endif
-
-            #if (THREADS4 >= 128) 
-            if (idx < 64) { 
-                s_data[idx] += s_data[idx + 64]; 
-                s_count[idx] += s_count[idx + 64];
-            } 
-            __syncthreads(); 
-            #endif
-
-            if (idx < 32){
-                if (THREADS4 >= 64){
-                    s_data[idx] += s_data[idx + 32];
-                    s_count[idx] += s_count[idx + 32];
-                }
-                if (THREADS4 >= 32){
-                    s_data[idx] += s_data[idx + 16];
-                    s_count[idx] += s_count[idx + 16];
-                }
-                if (THREADS4 >= 16){
-                    s_data[idx] += s_data[idx + 8];
-                    s_count[idx] += s_count[idx + 8];
-                }
-                if (THREADS4 >= 8){
-                    s_data[idx] += s_data[idx + 4];
-                    s_count[idx] += s_count[idx + 4];
-                }
-                if (THREADS4 >= 4){
-                    s_data[idx] += s_data[idx + 2];
-                    s_count[idx] += s_count[idx + 2];
-                }
-                if (THREADS4 >= 2){
-                    s_data[idx] += s_data[idx + 1];
-                    s_count[idx] += s_count[idx + 1];
-                }
-            }
-        }
-
-        if(idx == 0){
-            reduction_out[dim * RED_OUT_WIDTH + blockIdx.x * NCLUSTERS + c] = s_data[0];
-            reduction_counts[blockIdx.x * NCLUSTERS + c] = s_count[0];
         }
     }
 }
@@ -438,59 +361,10 @@ __global__ void step4part2(int *cluster_changed, float *reduction_out, int *redu
                 s_data[idx] = reduction_out[dim*RED_OUT_WIDTH + idx*NCLUSTERS + c];
                 s_count[idx] = reduction_counts[idx*NCLUSTERS + c];
             }
-            __syncthreads();
-            
-            // do the reduction
-            #if (THREADS4PART2 >= 512) 
-            if (idx < 256) { 
-                s_data[idx] += s_data[idx + 256]; 
-                s_count[idx] += s_count[idx + 256];
-            }
-            __syncthreads();
-            #endif
+"""
 
-            #if (THREADS4PART2 >= 256) 
-            if (idx < 128) { 
-                s_data[idx] += s_data[idx+128]; 
-                s_count[idx] += s_count[idx + 128];
-            } 
-            __syncthreads(); 
-            #endif
-
-            #if (THREADS4PART2 >= 128) 
-            if (idx < 64) { 
-                s_data[idx] += s_data[idx + 64]; 
-                s_count[idx] += s_count[idx + 64];
-            } 
-            __syncthreads(); 
-            #endif
-
-            if (idx < 32){
-                if (THREADS4PART2 >= 64){
-                    s_data[idx] += s_data[idx + 32];
-                    s_count[idx] += s_count[idx + 32];
-                }
-                if (THREADS4PART2 >= 32){
-                    s_data[idx] += s_data[idx + 16];
-                    s_count[idx] += s_count[idx + 16];
-                }
-                if (THREADS4PART2 >= 16){
-                    s_data[idx] += s_data[idx + 8];
-                    s_count[idx] += s_count[idx + 8];
-                }
-                if (THREADS4PART2 >= 8){
-                    s_data[idx] += s_data[idx + 4];
-                    s_count[idx] += s_count[idx + 4];
-                }
-                if (THREADS4PART2 >= 4){
-                    s_data[idx] += s_data[idx + 2];
-                    s_count[idx] += s_count[idx + 2];
-                }
-                if (THREADS4PART2 >= 2){
-                    s_data[idx] += s_data[idx + 1];
-                    s_count[idx] += s_count[idx + 1];
-                }
-            }
+    modString += meta.reduction2("s_data", "s_count", blocksize_step4part2) + """
+    
         }
 
         // calculate the new cluster, or copy the old one has no values or didn't change
@@ -501,7 +375,6 @@ __global__ void step4part2(int *cluster_changed, float *reduction_out, int *redu
                 new_clusters[dim * NCLUSTERS + c] = s_data[0] / s_count[0];
             }
         }
-            
     }
 }
     
@@ -512,7 +385,7 @@ __global__ void step4part2(int *cluster_changed, float *reduction_out, int *redu
 __global__ void calc_movement(float *clusters, float *new_clusters, float *cluster_movement, 
                                 int *cluster_changed)
 {
-""" + copy_to_shared("float", "clusters", "s_clusters", nClusters*nDim) + """
+""" + meta.copy_to_shared("float", "clusters", "s_clusters", nClusters*nDim) + """
     
     int cluster = threadIdx.x + blockDim.x*blockIdx.x;
     if(cluster_changed[cluster])
@@ -530,7 +403,7 @@ __global__ void step56(int *assignment,
                         float *lower, float * upper, 
                         float *cluster_movement, int *badUpper)
 {
-""" + copy_to_shared("float", "cluster_movement", "s_cluster_movement", nClusters) + """
+""" + meta.copy_to_shared("float", "cluster_movement", "s_cluster_movement", nClusters) + """
 
     int idx = threadIdx.x + blockDim.x * blockIdx.x;
     if (idx >= NPTS) return;
