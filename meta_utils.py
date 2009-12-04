@@ -1,3 +1,22 @@
+#   CS 292, Fall 2009
+#   Final Project
+#   Dwight Bell
+#--------------------
+
+"""
+Code-writing utilities for generating code within Source Modules.
+These routines generate sections of code as a string.
+
+    loop(start, end, factor, string) - generates an unrolled loop
+    
+    copy_to_shared(strType, strGlobal, strShared, size) - copies an
+        array from global memory to shared memory.
+    
+    reduction2(strData1, strData2, blocksize) - performs a
+        reduction sum on on two blocks of data.  The blocks must
+        have size equal to a power of two, less thn or equal to 512.    
+"""
+
 
 def loop(start, end, factor, string):
     """
@@ -16,7 +35,8 @@ def loop(start, end, factor, string):
     reps = (end-start)/factor
     code = ""
     if reps > 0:
-        code += "for(int __i__={0}; __i__<{1}; __i__+= {2})".format(start, start + factor*reps - 1, factor)
+        code += "for(int __i__={0}; __i__<{1}; __i__+= {2})".format(start, 
+                                                                start + factor*reps - 1, factor)
         code += "{\n"
         for j in range(factor):
             code += "   "+string.format("(__i__+{0})".format(j))
@@ -24,6 +44,7 @@ def loop(start, end, factor, string):
     for k in range(start + factor*reps, end):
         code += string.format(k)
     return code
+
     
 
 #maximum amount of shared memory

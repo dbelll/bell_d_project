@@ -1,3 +1,13 @@
+#   CS 292, Fall 2009
+#   Final Project
+#   Dwight Bell
+#--------------------
+
+"""
+Source modules for PyCuda implementation of
+k-means using triangle inequality algorithm.
+"""
+
 from pycuda.compiler import SourceModule
 
 import meta_utils as meta
@@ -201,8 +211,6 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
 
 // Step 3 of the algorithm
 
-//__global__ void step3(float *data, float *clusters, 
-//__global__ void step3(float *clusters, 
 """
     if useTextureForData:
         modString += "__global__ void step3(float *clusters,\n"
@@ -263,7 +271,6 @@ __global__ void calc_hdclosest(float *cc_dists, float *hdClosest)
                 ux = d_x_c;
                 cx = c;
                 rx = 0;
-                // **TODO**  flag the clusters that have changed which is needed for later steps
             }
         }
     }

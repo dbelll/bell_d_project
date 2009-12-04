@@ -1,2 +1,2 @@
 import cuda_kmeans_tri as kmt
-kmt.prime()
+kmt.big_prime()

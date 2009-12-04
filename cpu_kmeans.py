@@ -1,3 +1,22 @@
+#   CS 292, Fall 2009
+#   Final Project
+#   Dwight Bell
+#--------------------
+
+"""
+Runs standard k-means clustering using the cpu.
+
+kmeans_cpu(data, clusters, iterations)
+
+return (new_clusters, labels)
+
+data shape is (nDim, nPts) where nDim is # dimensions,
+    nPts is # of points
+clusters shape is (nDim, nClusters) where nClusters is
+    number of clusters
+new_clusters will have same shame as clusters
+labels will be (nPts), a lable for each point
+"""
 import numpy as np
 
 #------------------------------------------------------------------------------------

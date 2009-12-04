@@ -1,22 +1,47 @@
+#   CS 292, Fall 2009
+#   Final Project
+#   Dwight Bell
+#--------------------
+
 """
 Verify that each k-means function produces the same results as
 the scipy vq algorithm using a variety of problems.
 
-Throws an exception on the first error.
+To run from command line:
+    python verify.py
+    
+To run more extensive tests, start python and then:
+    import verify
+    verify.run_tests()
 """
 
 import numpy as np
 import numpy.random as random
-import py_kmeans
-from scipy.cluster.vq import kmeans, vq, kmeans2
+
+try:
+    import py_kmeans
+    print "py_kmeans found!"
+    py_kmeansFlag = 1
+except:
+    py_kmeansFlag = 0
+    print "py_kmeans not found"
+    print "run the script ./make_py_kmeans to compile it on resonance"
+    
+try:
+    from scipy.cluster.vq import kmeans, vq, kmeans2
+    print "scipy.cluster.vq found!"
+    scipyFlag = 1
+except ImportError:
+    scipyFlag = 0
+    print "scipy.cluster.vq not available"
+
 import time
-import cuda_kmeans
 import cuda_kmeans_tri
 import cpu_kmeans
 
 VERBOSE = 0
-PRINT_TIMES = 1
-SEED = 200
+PRINT_TIMES = 0
+SEED = 100
 
 def mpi_labels(data, num_clusters, nReps, seed = SEED):
     # reset the random seed so the first cluster assignments will be the same
@@ -36,7 +61,7 @@ def scipy_labels(data, clusters, nReps):
 def run_labels(data, nClusters, nReps, seed=SEED):
     random.seed(seed)
     # run py_kmeans.kmeans once to get a starting label assignment,
-    # which will be used by the scipy routine
+    # which will be used by the scipy routine and others
     clusters, dist, labels = py_kmeans.kmeans(data, nClusters, 1, 0)
     if VERBOSE:
         print "data"
@@ -46,7 +71,8 @@ def run_labels(data, nClusters, nReps, seed=SEED):
  
     (nPts, nDim) = data.shape
     nClusters = clusters.shape[0] 
-    print "[nPts:{0:6}][nDim:{1:4}][nClusters:{2:4}][nReps:{3:3}]...".format(nPts, nDim, nClusters, nReps),
+    print "[nPts:{0:6}][nDim:{1:4}][nClusters:{2:4}][nReps:{3:3}]...".format(nPts, nDim, 
+                                                                            nClusters, nReps),
 
     data2 = np.swapaxes(data, 0, 1).astype(np.float32).copy('C')
     clusters2 = np.swapaxes(clusters, 0, 1).astype(np.float32).copy('C')
@@ -57,6 +83,7 @@ def run_labels(data, nClusters, nReps, seed=SEED):
         print "clusters2"
         print clusters2
 
+    """
     t1 = time.time()
     (cuda_clusters, cuda_labels) = cuda_kmeans.kmeans_gpu(data2, clusters2, nReps+1)
     if VERBOSE:
@@ -65,6 +92,7 @@ def run_labels(data, nClusters, nReps, seed=SEED):
     t2 = time.time()
     if PRINT_TIMES:
         print "\ncuda ", t2-t1
+    """
     
     t1 = time.time()
     (tri_clusters, tri_labels) = cuda_kmeans_tri.trikmeans_gpu(data2, clusters2, nReps+1)
@@ -84,56 +112,65 @@ def run_labels(data, nClusters, nReps, seed=SEED):
     if PRINT_TIMES:
         print "mpi  ", t2-t1
 
-    t1 = time.time()
-    labels_scipy = scipy_labels(data, clusters, nReps)
-    if VERBOSE:
-        print "scipy labels:"
-        print labels_scipy[0]
-    t2 = time.time()
-    if PRINT_TIMES:
-        print "scipy", t2-t1
+    if scipyFlag:
+        t1 = time.time()
+        labels_scipy = scipy_labels(data, clusters, nReps)
+        if VERBOSE:
+            print "scipy labels:"
+            print labels_scipy[0]
+        t2 = time.time()
+        if PRINT_TIMES:
+            print "scipy", t2-t1
     
-    """
     t1 = time.time()
     (cpu_clusters, cpu_labels) = cpu_kmeans.kmeans_cpu(data2, clusters2, nReps+1)
     if VERBOSE:
         print "cpu_kmeans labels:"
         print cpu_labels
     t2 = time.time()
-    print "cpu  ", t2-t1
-    """
+    if PRINT_TIMES:
+        print "cpu  ", t2-t1
 
     error = 0
+    
+    if scipyFlag:
+        try:
+            np.testing.assert_array_equal(labels_mpi[0], labels_scipy[0])
+        except AssertionError:
+            print "mpi<>scipy",
+            error = 1
+    
     try:
-        np.testing.assert_array_equal(labels_mpi[0], labels_scipy[0])
+        np.testing.assert_array_equal(labels_mpi[0], cpu_labels)
     except AssertionError:
-        print "mpi <> scipy"
+        print "mpi<>cpu",
         error = 1
     
+    """
     try:
         np.testing.assert_array_equal(cuda_labels, tri_labels)
     except AssertionError:
-        print "cuda <> tri"
-        error = 1
-
-    """
-    try:
-        np.testing.assert_array_equal(cuda_labels, cpu_labels)
-    except AssertionError:
-        print "cuda <> cpu"
+        print "cuda<>tri",
         error = 1
     """
+    
+    try:
+        np.testing.assert_array_equal(tri_labels, cpu_labels)
+    except AssertionError:
+        print "tri<>cpu",
+        error = 1
 
     try:
-        np.testing.assert_array_equal(labels_mpi[0], cuda_labels)
+        np.testing.assert_array_equal(labels_mpi[0], tri_labels)
     except AssertionError:
-        print "cuda <> mpi"
+        print "tri<>mpi",
         error = 1
+
     if error == 0:
         print "Labels OK ..."
+    else:
+        print ""
     
-    #print "Clusters max diff =", np.max(labels_mpi[1] - labels_scipy[1]) 
-
 
 def run_tests():
     t1 = time.time()
@@ -151,20 +188,21 @@ def run_tests():
     print "Testing complete in ", time.time()-t1, "seconds"
 
 def run_quick(nReps = 4):
-    data = random.rand(1000, 60)
-    run_labels(data, 20, nReps)
-    data = random.rand(1000, 600)
-    run_labels(data, 2, nReps)
-    data = random.rand(1000, 6)
-    run_labels(data, 200, nReps)
-    data = random.rand(10000, 60)
-    run_labels(data, 20, nReps)
-    data = random.rand(10000, 600)
-    run_labels(data, 2, nReps)
-    data = random.rand(10000, 6)
-    run_labels(data, 200, nReps)
-    data = random.rand(30000, 6)
-    run_labels(data, 20, nReps)
+    if py_kmeansFlag:
+        data = random.rand(1000, 60)
+        run_labels(data, 20, nReps)
+        data = random.rand(1000, 600)
+        run_labels(data, 2, nReps)
+        data = random.rand(1000, 6)
+        run_labels(data, 200, nReps)
+        data = random.rand(10000, 60)
+        run_labels(data, 20, nReps)
+        data = random.rand(10000, 600)
+        run_labels(data, 2, nReps)
+        data = random.rand(10000, 6)
+        run_labels(data, 200, nReps)
+        data = random.rand(30000, 6)
+        run_labels(data, 20, nReps)
     
 if __name__ == '__main__':
     run_quick()
