@@ -60,7 +60,7 @@ def trikmeans_gpu(data, clusters, iterations, return_times = 0):
     #---------------------------------------------------------------
     useTextureForData = 0
     
-    usePageLockedMemory = 1
+    usePageLockedMemory = 0
 
     if(nPts > 32768):
         useTextureForData = 0
@@ -847,6 +847,14 @@ def timings(t = 1, v = 0):
 def prime_mods(t = 0, v = 0):
     # run each test once to get the module compiled and on the gpu
     quiet_runs([1], [100, 1000, 10000, 100000], [4, 20, 100, 500], [5, 15, 45, 135], [1], t, v)
+
+def big_timings(t = 1, v = 0):
+    # run a bunch of tests with optional timing
+    quiet_runs([1], [1000000], [4, 20, 100, 500], [5, 15, 45, 135], [4, 8, 16, 32], t, v)
+    
+def big_prime(t = 0, v = 0):
+    # run each test once to get the module compiled and on the gpu
+    quiet_runs([1], [1000000], [4, 20, 100, 500], [5, 15, 45, 135], [1], t, v)
 
 def quickTimes(nReps = 5):
     if quickRun() > 0:
